@@ -1,0 +1,16 @@
+{
+  "name": "webrobot",
+  "description": "WebRobot ETL platform — pipeline builder, job management, stage catalog, agent management, dataset management",
+  "version": "0.1.0",
+  "author": { "name": "WebRobot Ltd", "email": "ceo@webrobot.eu" },
+  "homepage": "https://webrobot.eu",
+  "repository": "https://github.com/WebRobot-Ltd/webrobot-claude-plugin",
+  "license": "MIT",
+  "mcpServers": {
+    "webrobot": {
+      "command": "python3",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-server/server.py"],
+      "env": {}
+    }
+  }
+}
