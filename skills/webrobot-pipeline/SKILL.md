@@ -68,6 +68,84 @@ When the user wants to:
 - **Loop/pagination**: look for "pagination", "scroll", "loop" stages.
 - **Browser action**: use action stages with an agent that has a browser configured.
 
+## iextract — intelligent extraction with field prefix
+
+`iextract` uses a code-based LLM prompt to extract structured fields from a page. Always provide a field prefix to namespace extracted values and avoid collisions.
+
+```yaml
+- stage: iextract
+  args:
+    - selector: "body"
+      method: "code"
+    - "Extract from this e-commerce product page: EAN or GTIN code (field: pc_ean_code),
+       product title (field: pc_title), price as number without currency symbol (field: pc_price),
+       currency ISO code EUR/USD/GBP (field: pc_currency),
+       availability as in_stock or out_of_stock or unknown (field: pc_availability),
+       main product image URL (field: pc_image_url).
+       If a field is not found return empty string. Preserve all input fields."
+    - "pc_"   # field prefix — all extracted fields are prefixed with pc_
+```
+
+Extracted fields will appear in the row as `pc_ean_code`, `pc_title`, `pc_price`, etc.
+
+## Custom plugin stages in a pipeline
+
+When a plugin is installed (e.g., price comparison plugin), its stage IDs can be used directly in the pipeline YAML just like built-in stages. Always verify stage IDs with `list_stages` or `describe_stage`.
+
+Example — price comparison discovery pipeline:
+```yaml
+pipeline:
+  stages:
+    - stage: load_csv
+      args:
+        - path: "${INPUT_CSV_PATH}"
+          header: "true"
+    - stage: searchEngine
+      args:
+        - provider: "google"
+          query: "${ean} ${product_name} site:${competitor_site}"
+          num_results: 3
+    - stage: visit
+      args:
+        - "$result_link"
+    - stage: iextract
+      args:
+        - selector: "body"
+          method: "code"
+        - "Extract: EAN (pc_ean_code), title (pc_title), price (pc_price), currency (pc_currency), availability (pc_availability), image URL (pc_image_url)."
+        - "pc_"
+    - stage: pc_match_scorer     # custom ETL plugin stage
+      args: []
+    - stage: pc_image_match_stage
+      args: []
+    - stage: pc_save_match
+      args:
+        - "ean"
+        - "result_link"
+        - "competitor_site"
+        - "match_confidence"
+```
+
+## Python Extensions inline
+
+For custom row-level logic that doesn't require a compiled plugin, use Python Extensions directly in the YAML. See skill `webrobot-python-extension` for the full guide.
+
+Quick syntax:
+```yaml
+pipeline:
+  stages:
+    - stage: python_row_transform:my_transform
+      args: []
+
+python_extensions:
+  stages:
+    my_transform:
+      type: row_transform
+      function: |
+        def my_transform(row):
+            return {**row, 'new_field': row.get('existing_field', '').upper()}
+```
+
 ## On $ARGUMENTS
 
 If the user passed a YAML file path, read the file and help them modify or validate it.

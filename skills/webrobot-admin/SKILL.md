@@ -59,6 +59,33 @@ Cloud Credentials (API keys, storage, LLM)
 - `list_llm_providers` shows which LLM providers are available (have credentials configured).
 - `llm_infer(prompt)` lets you test the LLM endpoint or generate content.
 
+### Price comparison plugin
+
+The price comparison plugin exposes domain endpoints under `/webrobot/api/price-comparison/`. Use `curl` or the platform API client — these are not MCP tools.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/bootstrap` | Create ETL project + agents for the calling org (one-time setup) |
+| GET | `/products` | List monitored EAN catalog |
+| POST | `/products` | Add EAN: `{"ean":"...", "product_name":"...", "brand":"...", "image_url":"..."}` |
+| DELETE | `/products/{ean}` | Remove EAN from catalog |
+| GET | `/competitors` | List active competitor domains |
+| POST | `/competitors` | Add competitor: `{"site_domain":"amazon.it", "site_name":"Amazon Italy", "country_code":"IT"}` |
+| DELETE | `/competitors/{id}` | Soft-delete competitor |
+| POST | `/jobs/discovery` | Run phase 1: search → match → persist URLs. Body: `{"cloudCredentialIds":["uuid"]}` |
+| POST | `/jobs/monitoring` | Run phase 2: re-fetch prices from saved URLs |
+| GET | `/prices` | Current prices (`?ean=&competitor_site=&limit=200`) |
+| GET | `/matches` | Confirmed product matches (`?ean=&competitor_site=`) |
+
+Typical setup sequence:
+1. `POST /bootstrap` — creates project + discovery + monitoring agents for the org
+2. `POST /products` × N — populate EAN catalog
+3. `POST /competitors` × N — add competitor domains
+4. `POST /jobs/discovery` — run phase 1, passing cloud credential IDs for GROQ + Google Search
+5. `GET /matches` — verify match confidence scores
+6. `POST /jobs/monitoring` — run phase 2 to collect prices
+7. `GET /prices` — query current prices
+
 ## Output formatting
 
 When listing resources, always present them in a clear table or list with:
