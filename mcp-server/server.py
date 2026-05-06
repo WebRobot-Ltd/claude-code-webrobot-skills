@@ -441,6 +441,96 @@ def suggest_pipeline_stages(description: str) -> str:
         return json.dumps({"error": str(e)})
 
 
+@mcp.tool()
+def auth_check() -> str:
+    """Diagnose how the MCP server is authenticated against the WebRobot API.
+
+    Returns a JSON object reporting:
+      - authenticated: bool — whether an API key or JWT was found
+      - source:        str  — "env" / "~/.config/webrobot/config.cfg" / "~/.webrobot/config.cfg" / "./config.cfg" / "none"
+      - api_endpoint:  str  — the resolved base URL
+      - mode:          "apikey" | "jwt" | "none"
+      - hint:          str  — when not authenticated, instructions to fix
+
+    Always works (does not call the WebRobot API). Use this before doing anything else
+    when the user reports 401 errors or asks "am I logged in?".
+    """
+    info: dict[str, Any] = {
+        "authenticated": bool(AUTH_HEADER),
+        "api_endpoint":  BASE_URL or "(not configured)",
+    }
+    # Determine mode
+    if AUTH_HEADER:
+        if AUTH_HEADER.lower().startswith("bearer "):
+            info["mode"] = "jwt"
+        else:
+            info["mode"] = "apikey"
+    else:
+        info["mode"] = "none"
+    # Determine source
+    if os.environ.get("WEBROBOT_API_KEY") or os.environ.get("WEBROBOT_JWT"):
+        info["source"] = "env"
+    else:
+        for candidate in [
+            Path.home() / ".config" / "webrobot" / "config.cfg",
+            Path.home() / ".webrobot" / "config.cfg",
+            Path("config.cfg"),
+        ]:
+            if candidate.exists():
+                info["source"] = str(candidate)
+                break
+        else:
+            info["source"] = "none"
+    if not info["authenticated"]:
+        info["hint"] = (
+            "No credentials found. Either:\n"
+            "  (a) export WEBROBOT_API_KEY=... and WEBROBOT_API_ENDPOINT=https://api.webrobot.eu, OR\n"
+            "  (b) run `webrobot config init` to create ~/.webrobot/config.cfg.\n"
+            "Public endpoints (e.g. /webrobot/api/catalog/stages) work without credentials."
+        )
+    return _fmt(info)
+
+
+@mcp.tool()
+def api_call(
+    method: str,
+    path: str,
+    query_params: Optional[dict] = None,
+    body: Optional[dict] = None,
+) -> str:
+    """Generic WebRobot REST API call — escape hatch for endpoints not wrapped by a curated tool.
+
+    Use this when the user asks to call an endpoint that doesn't have a dedicated MCP tool
+    (typical case: a partner plugin's vertical endpoints like
+    /webrobot/api/sentiment/timeseries, /webrobot/api/<my-plugin>/...). The call uses the
+    same auth, base URL and serde as every curated tool.
+
+    Args:
+      method:        HTTP method (GET, POST, PUT, PATCH, DELETE).
+      path:          Path component starting with "/" (e.g. "/webrobot/api/sentiment/timeseries").
+                     Public endpoints like /webrobot/api/catalog/stages also work without auth.
+      query_params:  Optional dict of query string parameters; null/None values are dropped.
+      body:          Optional JSON-serialisable body (POST/PUT/PATCH).
+
+    Returns: pretty-printed JSON of the response, or {"error": ...} on HTTP error.
+
+    Examples:
+      api_call("GET",  "/webrobot/api/catalog/stages", {"plugin_type": "etl"})
+      api_call("GET",  "/webrobot/api/sentiment/timeseries", {"bucket": "day"})
+      api_call("POST", "/webrobot/api/sentiment/analyze", body={"text": "I love this"})
+    """
+    method_norm = method.upper().strip() if method else "GET"
+    if method_norm not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+        return json.dumps({"error": f"unsupported method: {method}"})
+    if not path or not path.startswith("/"):
+        return json.dumps({"error": "path must start with '/'"})
+    try:
+        result = _call(method_norm, path, body=body, params=query_params)
+        return _fmt(result) if not isinstance(result, str) else result
+    except RuntimeError as e:
+        return json.dumps({"error": str(e)})
+
+
 if __name__ == "__main__":
     if not AUTH_HEADER:
         print(

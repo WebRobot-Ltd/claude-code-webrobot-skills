@@ -12,11 +12,37 @@ WebroBot plugins extend the platform without modifying the core. Two complementa
 
 | Plugin type | Language | Mechanism | When to use |
 |-------------|----------|-----------|-------------|
-| **ETL plugin** | Scala / Gradle | Java ServiceLoader | Custom pipeline stages (transform, sink, source) |
+| **ETL plugin** | Scala / Gradle | Java ServiceLoader | Custom pipeline stages (transform, filter, source, sink, partition, group, aggregate) |
 | **REST API plugin** | Java / Maven | JAX-RS + manifest.json | New API endpoints, domain data management, job orchestration |
 
-Reference implementation: **webrobot-price-comparison**
-`https://github.com/WebRobot-Ltd/webrobot-price-comparison`
+Reference implementations (all on JitPack — partners consume with zero auth):
+
+| Repo | Coordinates |
+|------|------------|
+| [webrobot-plugin-sdk](https://github.com/WebRobot-Ltd/webrobot-plugin-sdk) | `com.github.WebRobot-Ltd:webrobot-plugin-sdk:v0.2.1` |
+| [webrobot-jersey-plugin-sdk](https://github.com/WebRobot-Ltd/webrobot-jersey-plugin-sdk) | `com.github.WebRobot-Ltd:webrobot-jersey-plugin-sdk:v0.2.0` |
+| [webrobot-cli-sdk](https://github.com/WebRobot-Ltd/webrobot-cli-sdk) | `com.github.WebRobot-Ltd:webrobot-cli-sdk:v0.2.0` |
+| [webrobot-example-plugin](https://github.com/WebRobot-Ltd/webrobot-example-plugin) (full ETL example) | source-only reference |
+| [webrobot-sentimental-plugin](https://github.com/WebRobot-Ltd/webrobot-sentimental-plugin) (etl + api + cli end-to-end) | three-module worked example |
+| [webrobot-price-comparison](https://github.com/WebRobot-Ltd/webrobot-price-comparison) | source-only reference |
+
+**Stage catalog** — `GET https://api.webrobot.eu/webrobot/api/catalog/stages` (public, no auth). Lists every stage already registered on the platform with its `arg_schema`.
+
+```bash
+# Discover all stages
+curl -fsSL https://api.webrobot.eu/webrobot/api/catalog/stages
+
+# Filter by plugin to verify what your plugin currently exports
+curl -fsSL "https://api.webrobot.eu/webrobot/api/catalog/stages?plugin_id=my-plugin"
+
+# Search by stage name or alias to avoid collisions before naming
+curl -fsSL "https://api.webrobot.eu/webrobot/api/catalog/stages?stage_name=score"
+
+# Filter to actions (spark_action) when contributing browser automation steps
+curl -fsSL "https://api.webrobot.eu/webrobot/api/catalog/stages?plugin_type=spark_action"
+```
+
+Always query the catalog **before naming a new stage** — name collisions silently override existing stages at plugin load. The catalog also tells you what arg shape partners are accustomed to, useful when designing a stage that needs to compose with existing pipelines.
 
 ---
 
@@ -37,7 +63,7 @@ my-plugin/
   manifest.json
 ```
 
-### build.gradle.kts
+### build.gradle.kts (partner / standalone — JitPack)
 
 ```kotlin
 plugins {
@@ -47,12 +73,24 @@ plugins {
 group = "com.example"
 version = "1.0.0"
 
+java { toolchain { languageVersion.set(JavaLanguageVersion.of(17)) } }
+
+repositories {
+    mavenCentral()
+    maven { url = uri("https://jitpack.io") }
+}
+
+val scalaFullV = "2.13.12"
+
 dependencies {
-    compileOnly(project(":webrobot-plugin-sdk"))           // provided at runtime by engine
-    compileOnly("org.scala-lang:scala-library:2.13.12")
+    // Public Plugin SDK via JitPack — zero auth required for partners
+    compileOnly("com.github.WebRobot-Ltd:webrobot-plugin-sdk:v0.2.1")
+    compileOnly("org.scala-lang:scala-library:$scalaFullV")
     compileOnly("org.slf4j:slf4j-api:1.7.36")
 }
 ```
+
+**In-tree builds** (within `webrobot-etl/` repo): replace the compileOnly SDK dep with `compileOnly(project(":webrobot-plugin-sdk"))` — the in-tree module is kept in sync with the public v0.2.1 release, so source code reads identically.
 
 ### Stage types
 
@@ -79,6 +117,43 @@ class MyTransformStage extends WTransformStage {
   private def computeScore(s: String): Double = ???
 }
 ```
+
+#### WPartitionStage — partition iterator in/out (REQUIRED for LLM-using stages)
+
+`WTransformStage` is stateless and serialized to Spark workers — it does NOT receive a `WebroStageContext`. So if you need `ctx.llm`, `ctx.query`, `ctx.execute`, etc. for **per-row enrichment**, use `WPartitionStage` instead. The engine calls it once per Spark partition; the implementation maps over the iterator.
+
+```scala
+import eu.webrobot.plugin.sdk.{WArgs, WPartitionStage, WRow, WebroStageContext}
+
+class SentimentAnalyzeStage extends WPartitionStage {
+
+  override def name: String = "sentiment_analyze"
+
+  override def transformPartition(
+    rows: Iterator[WRow], args: WArgs, ctx: WebroStageContext
+  ): Iterator[WRow] = {
+    val textField = args.string(0, "text")
+    val model     = args.string(1, "default")
+
+    rows.map { row =>
+      val text     = row.str(textField).getOrElse("").trim
+      val response = if (model.isEmpty || model == "default") ctx.llm.infer(prompt(text))
+                     else ctx.llm.infer(prompt(text), model)
+      val parsed   = parseLlmResponse(response)
+      row.set("sentiment_polarity", parsed.polarity)
+         .set("sentiment_label",    parsed.label)
+    }
+  }
+
+  private def prompt(text: String): String = ???
+  private def parseLlmResponse(s: String): Sentiment = ???
+}
+```
+
+ServiceLoader registration: `META-INF/services/eu.webrobot.plugin.sdk.WPartitionStage`.
+
+Worked end-to-end example with this exact pattern:
+[webrobot-sentimental-plugin/etl](https://github.com/WebRobot-Ltd/webrobot-sentimental-plugin/tree/main/etl) — analyze stage + atomic 4-table sink + load source + filter + aggregate refresh.
 
 #### WSinkStage — row in, side effect (DB write), row out
 
@@ -136,6 +211,8 @@ args.int(2, 10)
 
 ### WebroStageContext API
 
+Available in **context-aware** stages: `WSourceStage`, `WSinkStage`, `WPartitionStage`, `WGroupStage`. NOT available in `WTransformStage`, `WFilterStage`, `WAggregateStage` (stateless / serialized to workers).
+
 ```scala
 // DB read — returns Iterator[WRow]
 val rows = ctx.query("SELECT id FROM table WHERE org_id = ?", Seq[Any](orgId))
@@ -144,18 +221,41 @@ while (rows.hasNext) { val row = rows.next(); ... }
 // DB write — returns Int (rows affected)
 val n = ctx.execute("INSERT INTO ...", Seq[Any](...))
 
+// Transactional block (engine handles commit/rollback)
+ctx.transaction { conn =>
+  val ps = conn.prepareStatement("INSERT INTO ... RETURNING id")
+  ps.setString(1, value)
+  val rs = ps.executeQuery()
+  rs.next(); rs.getLong(1)
+}
+
 // IMPORTANT: never use ctx.query() for INSERT/UPDATE — use ctx.execute()
 // Separate execute() + query() for UPSERT+RETURNING patterns
 
 // HTTP call
 val resp = ctx.httpPost("https://api.example.com/v1/infer", jsonBody, Map("Authorization" -> s"Bearer $key"))
 
+// LLM inference via the platform's configured providers (since SDK v0.2.1)
+val out1 = ctx.llm.infer("Summarise this text: " + text)
+val out2 = ctx.llm.infer(prompt, "groq")                     // explicit provider
+val out3 = ctx.llm.infer(prompt, sysPrompt, "openai", "gpt-4o-mini")
+val ok   = ctx.llm.isAvailable                                // false → no provider configured
+
+// Object storage (MinIO / S3)
+val bytes = ctx.storageGet("path/to/file.csv")
+ctx.storagePut("path/to/output.json", bytes, "application/json")
+
 // Config / env
 val apiKey = ctx.config("GROQ_API_KEY")   // from cloud credentials env injection
+val orgId  = ctx.config("webrobot.org.id")
 
 // Logging
+ctx.log("partition processed normally")
 ctx.warn("something unexpected happened")
+ctx.error("fatal — cannot continue", causeOpt)
 ```
+
+Plugin authors MUST NOT embed provider API keys — credential resolution is centralised by the engine. `ctx.llm.infer` always honours the org's configured provider; the plugin chooses only the model / system prompt.
 
 ### ServiceLoader registration
 
