@@ -33,12 +33,58 @@ def _parse_hocon_credentials(text: str) -> dict[str, str]:
     return result
 
 
-def _load_config() -> tuple[str, str]:
-    """Returns (base_url, auth_header)."""
+def _parse_json_credentials(text: str) -> dict[str, str]:
+    """Plugin-style config: {"api_endpoint": "...", "apikey": "...", "jwt": "..."}"""
+    try:
+        data = json.loads(text)
+    except Exception:
+        return {}
+    out: dict[str, str] = {}
+    for k in ("api_endpoint", "apikey", "jwt", "bearer", "token"):
+        v = data.get(k)
+        if isinstance(v, str) and v:
+            out[k] = v
+    return out
+
+
+# Where the plugin stores its own credentials, scoped to this Claude Code plugin.
+# Highest priority after env vars, so the plugin works standalone without the CLI installed.
+PLUGIN_CONFIG_DIR  = Path.home() / ".claude" / "plugins" / "webrobot"
+PLUGIN_CONFIG_FILE = PLUGIN_CONFIG_DIR / "config.json"
+
+
+def _load_config() -> tuple[str, str, str]:
+    """Returns (base_url, auth_header, source_label).
+
+    Priority order:
+      1. Environment vars (WEBROBOT_API_ENDPOINT, WEBROBOT_API_KEY, WEBROBOT_JWT)
+      2. Plugin config:    ~/.claude/plugins/webrobot/config.json   (JSON, plugin-scoped)
+      3. CLI configs:      ~/.config/webrobot/config.cfg            (HOCON)
+                           ~/.webrobot/config.cfg                   (HOCON)
+                           ./config.cfg                             (HOCON, working dir)
+
+    The plugin-scoped JSON config is preferred over CLI configs so that users
+    who haven't installed the CLI can still authenticate the MCP server by
+    dropping a config.json under ~/.claude/plugins/webrobot/.
+    """
     endpoint = os.environ.get("WEBROBOT_API_ENDPOINT", "")
     api_key  = os.environ.get("WEBROBOT_API_KEY", "")
     jwt      = os.environ.get("WEBROBOT_JWT", "")
+    source   = "env" if (endpoint or api_key or jwt) else ""
 
+    def _absorb(creds: dict[str, str], label: str) -> None:
+        nonlocal endpoint, api_key, jwt, source
+        endpoint = endpoint or creds.get("api_endpoint", "")
+        api_key  = api_key  or creds.get("apikey", "")
+        jwt      = jwt      or creds.get("jwt") or creds.get("bearer") or creds.get("token", "")
+        if not source and (endpoint or api_key or jwt):
+            source = label
+
+    # Step 2: plugin-scoped JSON config
+    if not (endpoint and (api_key or jwt)) and PLUGIN_CONFIG_FILE.exists():
+        _absorb(_parse_json_credentials(PLUGIN_CONFIG_FILE.read_text()), str(PLUGIN_CONFIG_FILE))
+
+    # Step 3: CLI HOCON configs
     if not (endpoint and (api_key or jwt)):
         for candidate in [
             Path.home() / ".config" / "webrobot" / "config.cfg",
@@ -46,11 +92,9 @@ def _load_config() -> tuple[str, str]:
             Path("config.cfg"),
         ]:
             if candidate.exists():
-                creds = _parse_hocon_credentials(candidate.read_text())
-                endpoint = endpoint or creds.get("api_endpoint", "")
-                api_key  = api_key  or creds.get("apikey", "")
-                jwt      = jwt      or creds.get("jwt") or creds.get("bearer") or creds.get("token", "")
-                break
+                _absorb(_parse_hocon_credentials(candidate.read_text()), str(candidate))
+                if api_key or jwt:
+                    break
 
     base_url = (endpoint or "https://api.webrobot.eu").rstrip("/")
     if jwt:
@@ -59,10 +103,10 @@ def _load_config() -> tuple[str, str]:
         auth = f"ApiKey {api_key}"
     else:
         auth = ""
-    return base_url, auth
+    return base_url, auth, source or "none"
 
 
-BASE_URL, AUTH_HEADER = _load_config()
+BASE_URL, AUTH_HEADER, AUTH_SOURCE = _load_config()
 
 
 # ── HTTP helpers ───────────────────────────────────────────────────────────────
@@ -447,48 +491,68 @@ def auth_check() -> str:
 
     Returns a JSON object reporting:
       - authenticated: bool — whether an API key or JWT was found
-      - source:        str  — "env" / "~/.config/webrobot/config.cfg" / "~/.webrobot/config.cfg" / "./config.cfg" / "none"
+      - source:        str  — "env" / plugin config path / CLI config path / "none"
       - api_endpoint:  str  — the resolved base URL
       - mode:          "apikey" | "jwt" | "none"
       - hint:          str  — when not authenticated, instructions to fix
 
-    Always works (does not call the WebRobot API). Use this before doing anything else
+    Always works (does not call the WebRobot API). Use this before anything else
     when the user reports 401 errors or asks "am I logged in?".
     """
     info: dict[str, Any] = {
         "authenticated": bool(AUTH_HEADER),
         "api_endpoint":  BASE_URL or "(not configured)",
+        "source":        AUTH_SOURCE,
     }
-    # Determine mode
     if AUTH_HEADER:
-        if AUTH_HEADER.lower().startswith("bearer "):
-            info["mode"] = "jwt"
-        else:
-            info["mode"] = "apikey"
+        info["mode"] = "jwt" if AUTH_HEADER.lower().startswith("bearer ") else "apikey"
     else:
         info["mode"] = "none"
-    # Determine source
-    if os.environ.get("WEBROBOT_API_KEY") or os.environ.get("WEBROBOT_JWT"):
-        info["source"] = "env"
-    else:
-        for candidate in [
-            Path.home() / ".config" / "webrobot" / "config.cfg",
-            Path.home() / ".webrobot" / "config.cfg",
-            Path("config.cfg"),
-        ]:
-            if candidate.exists():
-                info["source"] = str(candidate)
-                break
-        else:
-            info["source"] = "none"
-    if not info["authenticated"]:
         info["hint"] = (
-            "No credentials found. Either:\n"
-            "  (a) export WEBROBOT_API_KEY=... and WEBROBOT_API_ENDPOINT=https://api.webrobot.eu, OR\n"
-            "  (b) run `webrobot config init` to create ~/.webrobot/config.cfg.\n"
+            "No credentials found. Three ways to fix:\n"
+            "  1. Plugin-scoped (recommended for users without the CLI):\n"
+            f"     Call auth_set(api_key=\"...\", api_endpoint=\"https://api.webrobot.eu\") to write {PLUGIN_CONFIG_FILE}\n"
+            "  2. Environment variables:\n"
+            "     export WEBROBOT_API_KEY=...  WEBROBOT_API_ENDPOINT=https://api.webrobot.eu\n"
+            "  3. CLI config (if webrobot CLI installed):\n"
+            "     `webrobot config init`\n"
             "Public endpoints (e.g. /webrobot/api/catalog/stages) work without credentials."
         )
     return _fmt(info)
+
+
+@mcp.tool()
+def auth_set(
+    api_key: Optional[str] = None,
+    jwt: Optional[str] = None,
+    api_endpoint: str = "https://api.webrobot.eu",
+) -> str:
+    """Write the plugin-scoped credentials file at ~/.claude/plugins/webrobot/config.json.
+
+    This is the recommended way to authenticate the plugin standalone, without depending
+    on the webrobot CLI being installed. Pass either an api_key OR a jwt (not both); the
+    plugin uses whichever is present, preferring jwt.
+
+    Restart Claude Code (or reconnect the MCP server) after calling this so the change
+    takes effect — config is read once at MCP startup.
+    """
+    if not api_key and not jwt:
+        return json.dumps({"error": "either api_key or jwt is required"})
+    PLUGIN_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    config: dict[str, str] = {"api_endpoint": api_endpoint}
+    if jwt:     config["jwt"]    = jwt
+    if api_key: config["apikey"] = api_key
+    PLUGIN_CONFIG_FILE.write_text(json.dumps(config, indent=2))
+    try:
+        PLUGIN_CONFIG_FILE.chmod(0o600)
+    except Exception:
+        pass
+    return _fmt({
+        "saved":         str(PLUGIN_CONFIG_FILE),
+        "mode":          "jwt" if jwt else "apikey",
+        "api_endpoint":  api_endpoint,
+        "next_step":     "Restart Claude Code (or reconnect the MCP server) for the change to take effect.",
+    })
 
 
 @mcp.tool()
