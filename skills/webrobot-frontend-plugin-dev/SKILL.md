@@ -90,6 +90,69 @@ The host tries multiple path variants per view: `<View>.js`, `<View>.mjs`, `dist
 
 `rolesAllowed` controls which user roles see the tab inside the extension page. `isSettings: true` flags a config view (rendered with a `config` badge).
 
+### `ui.menu[]` — sidebar contributions (May 2026+)
+
+A plugin can contribute sidebar entries beyond the legacy `Extensions`
+group via the new `ui.menu[]` array. Each entry attaches to a
+**whitelisted slot**; unknown slots are silently dropped at render.
+
+```json
+{
+  "ui": {
+    "menu": [
+      {
+        "slot": "main",                      // top-level new group (super_admin approval gating)
+        "label": "AI Training",
+        "icon": "sparkle",
+        "path": "/dashboard/ext/ml-intern",
+        "rolesAllowed": ["super_admin", "admin", "developer"],
+        "order": 250
+      },
+      {
+        "slot": "settings",
+        "parent": "security",                 // nest under existing Settings → Security
+        "label": "API Audit",
+        "path": "/dashboard/profile/security/api-audit"
+      },
+      {
+        "slot": "marketplace",
+        "label": "Featured Models",
+        "path": "/dashboard/marketplace/ml-models"
+      }
+    ],
+    "homeWidgets": [
+      {
+        "id": "spend-summary",
+        "title": "Cost This Month",
+        "size": "small",                      // small | medium | large | full
+        "component": "dist/widgets/SpendSummary.js",
+        "rolesAllowed": ["admin", "super_admin"]
+      }
+    ]
+  }
+}
+```
+
+**Slot whitelist (V0)**:
+
+| Slot | Where it lands | Approval |
+|------|----------------|----------|
+| `extensions` | Legacy Extensions group (default if `slot` omitted) | auto |
+| `marketplace` | Under Infrastructure / Configuration | auto |
+| `settings` | Under Settings (use `parent` to drill in) | auto |
+| `partner` | Partner Dashboard standalone group | auto |
+| `infrastructure` / `development` / `management` | Existing top-level categories | auto |
+| `ai-automation` / `business` / `user` | Existing standalone groups | auto |
+| `main` / `admin` | New top-level area | **super_admin gating at upload review** |
+
+`rolesAllowed[]` and `requiresScope` are evaluated at render — entries
+the user cannot access stay invisible. The host renders a small
+`(plugin)` tag next to every plugin-contributed entry to mitigate
+phishing-style injections that mimic platform entries.
+
+Reference schema (full validation): `webrobot-elt-clouddashboard/frontend/app/api/_utils/plugin-manifest-schema.json`.
+Design: `docs/PLUGIN_UI_FLEXIBLE_MENU.md`.
+
 ---
 
 ## Bundle contract — v1

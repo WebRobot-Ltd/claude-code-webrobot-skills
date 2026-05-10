@@ -299,6 +299,58 @@ One class name per line. File name must match the fully-qualified interface name
 }
 ```
 
+### Manifest schema (strict — May 2026+)
+
+Bundles uploaded to the marketplace are now validated against a JSON
+Schema at upload time. Required fields: `pluginId` (kebab/snake-case
+lowercase, 2–64 chars) and `version`. Recommended:
+
+```json
+{
+  "pluginId": "my-plugin",
+  "version": "1.0.0",
+  "pluginType": "etl",
+  "displayName": "My Plugin",
+  "description": "...",
+  "author": "Acme Inc.",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/acme/my-plugin",
+  "stages": [ ... ],
+  "components": [
+    {
+      "type": "vm-adapter",                 // jersey | etl | cli | ui | vm-adapter | browser-adapter | proxy-adapter
+      "providerKey": "my-cloud",
+      "ansibleRole": "my_cloud_adapter",
+      "supportedActions": ["create","delete","list","health"],
+      "regions": ["eu-fr-1"],
+      "egressDomains": ["api.my-cloud.com"]
+    }
+  ],
+  "egressDomains": ["api.my-cloud.com"],
+  "complianceFlags": ["gdpr"]
+}
+```
+
+If the manifest fails the strict schema, the upload is rejected with
+`HTTP 400 { error.code: 'BUNDLE_SCAN_BLOCKED', scan_status: 'manifest_invalid', scan_results.manifest.errors: [...] }`.
+Reference schema: `webrobot-elt-clouddashboard/frontend/app/api/_utils/plugin-manifest-schema.json`.
+
+### Bundle security pipeline (upload-time)
+
+Every uploaded ZIP goes through three layers (`scan_status` recorded
+on `tech_partner_bundle`, visible in super_admin review UI):
+
+| Layer | Tool | Failure mode | Blocking? |
+|-------|------|--------------|-----------|
+| Manifest validation | AJV + JSON-Schema | `manifest_invalid` | yes |
+| Signature scan | ClamAV daemon (when `SECURITY_SCAN_CLAMAV_URL` set) | `infected` | yes |
+| CVE scan | Trivy server (when `SECURITY_SCAN_TRIVY_URL` set) | `cve_critical` blocks; `cve_high` advisory | partial |
+
+A blocking outcome means the bundle never reaches Jersey — fix the
+issue locally and re-upload. A `cve_high` advisory still lets the
+bundle land in `pending_approval` but a super_admin will see the
+findings in `scan_results.trivy.vulns[]` during review.
+
 ### Build
 
 ```bash

@@ -59,6 +59,63 @@ Cloud Credentials (API keys, storage, LLM)
 - `list_llm_providers` shows which LLM providers are available (have credentials configured).
 - `llm_infer(prompt)` lets you test the LLM endpoint or generate content.
 
+## Partner program & marketplace billing (added May 2026)
+
+The partner program is **invitation-only**. Offline KYC happens before
+the invite is sent; the platform records the outcome on the
+`organization` row. MFA TOTP is **mandatory** for `super_admin`,
+`tech_provider`, `cloud_provider`, and `admin` roles — login does NOT
+issue a full JWT until MFA is confirmed.
+
+### Partner onboarding lifecycle
+Resources mostly managed via the Strapi REST API + super_admin UI;
+useful curl reference for ops:
+
+| Step | Endpoint / surface |
+|------|---------------------|
+| Invite | `POST /api/user-invites` (Strapi) — role can be any of `tech_provider`, `cloud_provider`, `referral_agency`, `marketing_agency`, `semi_managed_agency`, `white_label_agency`, `browser_provider`, `proxy_provider` |
+| Accept | `POST /api/user-invites/accept/:token` (public) |
+| KYC record (super_admin) | `PUT /api/organizations/:id` with `kyc_completed_at`, `kyc_method` (offline / stripe_identity / sumsub / onfido), `business_registration_number`, `vat_number`, `iban`, `kyc_notes` (super_admin internal) |
+| Stripe Connect onboarding | `POST /api/partners/tech-provider/stripe-connect/connect` — Express account; partner returns to dashboard after Stripe collects details |
+| MFA enroll (any logged-in user) | `POST /api/mfa/enroll` → returns base32 secret + QR + 8 recovery codes |
+| MFA confirm | `POST /api/mfa/confirm-enroll` `{ token: "123456" }` |
+| MFA challenge (login flow) | `POST /api/mfa/challenge` `{ mfa_token, code }` |
+| MFA disable | `POST /api/mfa/disable[/:userId]` (self or super_admin reset) |
+
+### Audit trail (`partner-audit-events`)
+Append-only log of every partner lifecycle event. 16 event types:
+`partner_invited` / `partner_accepted` / `partner_kyc_started` /
+`partner_kyc_verified` / `partner_kyc_rejected` /
+`partner_stripe_connect_started` / `partner_stripe_connect_completed` /
+`partner_stripe_disconnected` / `partner_first_bundle_uploaded` /
+`partner_bundle_approved` / `partner_bundle_rejected` /
+`partner_suspended` / `partner_reactivated` /
+`partner_mfa_enrolled` / `partner_mfa_disabled` / `partner_mfa_reset` /
+`partner_bundle_payout_created` / `customer_charge_created` /
+`customer_charge_paid` / `customer_charge_failed`.
+
+Read with `GET /api/partner-audit-events?filters[organization]=:id&sort=createdAt:desc`.
+
+### Marketplace billing
+Two K8s CronJobs run end-of-month against Jersey:
+- `monthly-run-charges` (day 5) creates one Stripe Invoice per
+  `(customer × currency)` with one `InvoiceItem` per plugin used in
+  the previous month.
+- `monthly-run-payouts` (day 12) transfers each tech_provider's net
+  share via Stripe Connect.
+
+Endpoints (all `RequiresScopes("super_admin")`):
+- `POST /webrobot/api/admin/marketplace-billing/run-charges?period=YYYY-MM&dryRun=true|false`
+- `POST /webrobot/api/admin/marketplace-billing/run-payouts?period=YYYY-MM&dryRun=true|false`
+- `GET  /webrobot/api/admin/marketplace-billing/charges?period=YYYY-MM`
+- `GET  /webrobot/api/admin/marketplace-billing/payouts?period=YYYY-MM`
+- `POST /webrobot/api/admin/marketplace-billing/charges/by-invoice/{invoiceId}/mark-paid` (called by Stripe webhook)
+- `POST /webrobot/api/admin/marketplace-billing/charges/by-invoice/{invoiceId}/mark-failed?reason=...`
+
+**Always run `dryRun=true` first** — produces the would-be invoices /
+transfers without hitting Stripe. Tables `marketplace_charges` and
+`marketplace_payouts` are populated either way (status `dry_run`).
+
 ### Price comparison plugin
 
 The price comparison plugin exposes domain endpoints under `/webrobot/api/price-comparison/`. Use `curl` or the platform API client — these are not MCP tools.
