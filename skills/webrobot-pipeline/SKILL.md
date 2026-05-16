@@ -365,6 +365,84 @@ output:
 
 There's also a **split form** for these stages — `inferNavigationSelector` / `inferJoinSelector` / `inferSelector` produce `_nav_selector` / `_join_selector` / `_inferred_selector` literal fields that downstream native stages consume with `$_nav_selector` references. Use the split form when you want the inferred selector to be observable in the row schema or to be reused by multiple downstream stages. The combined `intelligentExplore`/`intelligentJoin` form is simpler when each inference feeds exactly one consumer.
 
+## `browser_use` — agentic stage backed by Steel.dev
+
+For scenarios where the LLM-resolved actions / `auto_internal_search` aren't enough (multi-step flows: dismiss a cookie banner → log in → navigate categories → search → wait for SPA reload), the example-plugin exposes a `browser_use` stage that runs a `browser-use` Python agent on a Steel.dev session via the script `webrobot-etl/scripts/bookmaker_intelligent_nav_steel_dev.py`.
+
+### How it works
+
+1. The stage spawns the Python script with `--prompt` and `--url`.
+2. The browser-use agent (LLM-driven) executes the prompt against a Steel.dev browser session — accepts cookies, fills forms, navigates, waits for AJAX, scrolls, anything the prompt describes.
+3. The script prints `STEEL_SESSION_WS_URL=wss://…` to stdout right before terminating.
+4. The Scala stage parses that URL out of stdout and emits ONE row:
+   `{ steel_session_ws_url, url, prompt }`.
+5. A downstream `stage: fetch` with `args: ["$steel_session_ws_url"]` **attaches to the existing Steel session** (no new browser open, no re-navigate). The page is already where the agent left it. From there `intelligentFlatSelect` / `iextract` / `extract` work as usual.
+
+### Supported backends — Chromium-based BaaS only
+
+`browser_use` works with **Steel.dev** today, and is compatible with **any other Chromium-based browser-as-a-service** that exposes a CDP WebSocket — e.g. Browserbase, Anchor Browser, Hyperbrowser, BrowserCloud, Anchor, Lightpanda, headless-Chrome CDP endpoints. Swapping backend means pointing the script at a different `wss://…` connect URL; the rest of the chain (Visit → InternalSearchAction → Snapshot → downstream stages) is identical.
+
+> **Firefox / Camoufox is NOT supported, and not as a missing-config issue.** The upstream `browser-use` library (PyPI `browser-use` 0.12.x) is explicitly Chromium-only:
+>
+> - Hard dependency on `cdp-use` (CDP-only client).
+> - `BrowserChannel` enum has only `CHROMIUM`; `firefox_user_prefs` is commented out in `profile.py`.
+> - Docstring on `BrowserSession._cdp_connect`: *"Connect to a remote chromium-based browser via CDP using cdp-use."*
+> - The official ["Real Browser" doc](https://docs.browser-use.com/customize/browser/real-browser) covers only Chrome.
+> - Issue [browser-use/browser-use#850 "Executing Agent with Firefox"](https://github.com/browser-use/browser-use/issues/850) was closed by the maintainers as **NOT PLANNED**; discussions [#797](https://github.com/browser-use/browser-use/discussions/797) and [#859](https://github.com/browser-use/browser-use/discussions/859) have no maintainer answer with a working Firefox path.
+>
+> The cluster's internal **Camoufox** pods (Firefox + Playwright server, `pw.firefox.connect(ws_url)`) therefore CAN'T host the `browser_use` agent. For tasks that fit Camoufox, use the cheaper, non-agentic chain instead: `stage: fetch` with the `auto_internal_search:` shortcut, plus `intelligentExplore` / `intelligentJoin` / `iextract`. Those run on the WebRobot ETL browser backend, which already supports Camoufox.
+
+### Args + config
+
+```yaml
+- stage: browser_use
+  args:
+    - "<natural-language prompt for the browser agent>"   # required — literal or "$col"
+    - "https://example.com/landing"                       # required — literal or "$col"
+    - "$existing_session_url"                              # optional 3rd arg: attach to a Steel session left open by a previous browser_use stage
+  config:
+    timeout_sec: 180                                       # subprocess timeout (default 90s — bump for multi-step prompts)
+    cwd: ${WEBROBOT_ETL_DIR}                               # required — directory that contains scripts/ and .venv-browser-use/
+    python_path: ".venv-browser-use/bin/python"            # default
+    script: "scripts/bookmaker_intelligent_nav_steel_dev.py"  # default
+```
+
+The runtime env must have `STEEL_DEV_API_KEY` plus an LLM key the agent can use (`TOGETHERAI_API_KEY`, `OPENAI_API_KEY`, ...). `WEBROBOT_ETL_DIR` should be exported in the Spark driver environment so the stage finds the script and the python venv.
+
+### Variants (also from example-plugin)
+
+- `browser_use_loop` — N prompts in the same Steel session, optionally fed from a previous stage's column. Useful for "discover tabs then iterate clicks one per row" flows.
+- `browser_use_forum_lazy_load` — purpose-built for forums / comment threads with lazy-load: discover the load-more selector + replay it until the thread is fully expanded.
+- `browser_use_forum_lazy_load_extended` — same as above plus mechanical retry rounds + intelligentFlatSelect on the snapshotted HTML.
+
+### Canonical pattern: agentic navigation → cheap extraction
+
+```yaml
+pipeline:
+  - stage: browser_use
+    args:
+      - "Open the site, dismiss any cookie banner, submit the search form with the term 'pikachu', wait for the results page to load, respond with done."
+      - "https://scrapeme.live/shop/"
+    config:
+      timeout_sec: 180
+      cwd: ${WEBROBOT_ETL_DIR}
+
+  - stage: fetch
+    args: ["$steel_session_ws_url"]   # attaches to the running Steel session (no navigate)
+
+  - stage: intelligentFlatSelect
+    args:
+      - "the product cards in the search results grid"
+      - "product name as name, price with currency as price, stock as stock, image URL as image_url"
+      - ""
+```
+
+### When to pick `browser_use` vs the cheaper LLM stages
+
+- `auto_internal_search` (NativeFetchStage shortcut) — deterministic Visit + InternalSearchAction + Snapshot, LLM only resolves selectors. Cheap, fast, no Steel.dev round-trip. Use when the navigation is a known shape (fill one form, submit).
+- `intelligentExplore` / `intelligentJoin` — LLM only infers a single selector (pagination, item link), and the pipeline drives navigation. Cheap.
+- `browser_use` — full browser-use agent. Costs an LLM call per step + Steel.dev minutes. Use only when the navigation is genuinely agentic (multi-step, dynamic UI, captcha, country gates, login flows).
+
 ## Python Extensions — inline custom logic
 
 For row-level transforms that don't justify a Scala plugin:
