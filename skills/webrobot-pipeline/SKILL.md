@@ -263,6 +263,87 @@ Used inside any pipeline that has visited a page to pull structured fields. Alwa
     - "pc_"                     # position 2 = field prefix
 ```
 
+## LLM-driven e-commerce flow — internalSearch + intelligentExplore + intelligentJoin
+
+Use when CSS selectors are brittle, unknown, or change across categories — e.g. classic e-commerce: search the site, page through results, follow each item to its detail page, extract structured fields. Four stages compose. Order matters.
+
+### 1. `internalSearch` — fill the search form
+
+Backed by `InternalSearchStage`. Captures a `Snapshot()` of the current page (so it needs a live browser context — **use `visit` before it, not `wget`**). The LLM (`IntelligentActionResolver.resolve`) walks the DOM to identify the search input + submit button, and the stage swaps the inferred `TextInput` value with your query.
+
+```yaml
+- stage: internalSearch
+  args:
+    - "pikachu"                                                # literal query — or "$some_column" to use a row field
+    - "Find the search input in the header and submit it"      # optional override prompt
+```
+
+Failure mode: `"No current page available"` means the previous stage was `wget`. Switch to `visit`.
+
+### 2. `intelligentExplore` — auto-detect pagination
+
+Backed by `InferNavigationSelectorStage` (also exposed as `inferNavigationSelector` / `inferNavSelector` when used in the new split form). Materializes the dataset, picks the row whose `docs.lastOption` URI looks like a results page (heuristic: contains `?`, `#`, `/search`, `/sch/`, `_nkw`), runs `LLMSelectorInference.inferNavigationSelector` on that page's HTML, and uses the detected selector to walk pagination.
+
+```yaml
+- stage: intelligentExplore
+  args:
+    - "next page link"     # NL prompt — the LLM resolves it against the SERP DOM
+    - 2                    # max hop depth (each hop = one "next page" follow)
+```
+
+The "preferred row" heuristic is what makes the chain order critical: if `intelligentExplore` runs before `internalSearch` has navigated, the heuristic falls back to the homepage doc and the LLM ends up inferring footer/menu links instead of pagination.
+
+### 3. `intelligentJoin` — segment SERP rows + follow each item
+
+Backed by `InferJoinSelectorStage`. Same SERP-detection heuristic. `LLMSelectorInference.inferJoinSelector` produces a CSS selector for item-detail links; the stage post-processes the result to ensure it targets `<a>` (appends ` a` if the LLM returned a card container).
+
+```yaml
+- stage: intelligentJoin
+  args:
+    - "product detail link"   # NL prompt for the item links in each SERP row
+    - "none"                  # action prompt: usually "none"; use e.g. "click product link" for tab/button flows (sets useClick=true → no `a` suffix)
+    - 10                      # cap on items joined per SERP row
+```
+
+### 4. `iextract` on each item page
+
+Same as the section above, but applied per item page. Either short form (one prompt with `as <col>` aliases) or `{selector, method: "code"}` body form for sub-tree scoping.
+
+### Canonical composite shape
+
+```yaml
+pipeline:
+  - stage: visit               # MUST be a browser open, not wget
+    args: ["https://shop.example.com/"]
+
+  - stage: internalSearch
+    args: ["pikachu"]
+
+  - stage: intelligentExplore
+    args: ["next page link", 2]
+
+  - stage: intelligentJoin
+    args: ["product detail link", "none", 10]
+
+  - stage: iextract
+    args:
+      - "product name as name, price (with currency) as price, stock status as stock, image URL as image_url"
+      - "prod_"
+
+output:
+  format: parquet
+  mode: overwrite
+  path: "${OUTPUT_PARQUET_PATH}"
+```
+
+**Common pitfalls**:
+
+- `wget` before `internalSearch` → Snapshot fails → `"No current page available"`.
+- Running `intelligentExplore`/`intelligentJoin` before `internalSearch` has produced a SERP doc → wrong selectors inferred (the row preference heuristic doesn't see a navigated page).
+- `iextract` prompt without `as <col>` aliases → no column names to bind; rephrase as `field desc as col_name, …`.
+
+There's also a **split form** for these stages — `inferNavigationSelector` / `inferJoinSelector` / `inferSelector` produce `_nav_selector` / `_join_selector` / `_inferred_selector` literal fields that downstream native stages consume with `$_nav_selector` references. Use the split form when you want the inferred selector to be observable in the row schema or to be reused by multiple downstream stages. The combined `intelligentExplore`/`intelligentJoin` form is simpler when each inference feeds exactly one consumer.
+
 ## Python Extensions — inline custom logic
 
 For row-level transforms that don't justify a Scala plugin:
