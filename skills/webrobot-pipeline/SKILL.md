@@ -263,22 +263,41 @@ Used inside any pipeline that has visited a page to pull structured fields. Alwa
     - "pc_"                     # position 2 = field prefix
 ```
 
-## LLM-driven e-commerce flow — internalSearch + intelligentExplore + intelligentJoin
+## LLM-driven e-commerce flow — fetch+auto_internal_search → intelligentExplore → intelligentJoin → iextract
 
-Use when CSS selectors are brittle, unknown, or change across categories — e.g. classic e-commerce: search the site, page through results, follow each item to its detail page, extract structured fields. Four stages compose. Order matters.
+Use when CSS selectors are brittle, unknown, or change across categories — e.g. classic e-commerce: search the site, page through results, follow each item to its detail page, extract structured fields.
 
-### 1. `internalSearch` — fill the search form
+### 1. Internal search is an Action, not a Stage
 
-Backed by `InternalSearchStage`. Captures a `Snapshot()` of the current page (so it needs a live browser context — **use `visit` before it, not `wget`**). The LLM (`IntelligentActionResolver.resolve`) walks the DOM to identify the search input + submit button, and the stage swaps the inferred `TextInput` value with your query.
+This is the part most people get wrong. **`internalSearch` is an `Action`**, not a pipeline stage. It lives in `web.actions.InternalSearchAction` and is meant to be inserted into the **trace of a fetch stage** — never as a top-level `- stage: internalSearch` entry. (The `InternalSearchStage` class you'll find in `example-plugin` is a legacy shortcut wrapper; it's not in the canonical stage catalog.)
+
+The same is true for `IntelligentAction` (the case class in `example-plugin/IntelligentAction.scala`): it's an action that translates an NL `query` to a sub-trace at execution time via `IntelligentActionResolver`. There is **no `intelligentAction` stage**. It goes inside a fetch trace.
+
+The canonical, declarative way to combine "open page → fill search → snapshot the result page" is the `auto_internal_search` shortcut on `stage: fetch` (the NativeFetchStage). It builds the trace `Visit(url) → InternalSearchAction(query, prompt) → Snapshot()` for you (the trailing Snapshot is added by `AutoSnapshotRule` because `InternalSearchAction.outputNames` is empty).
 
 ```yaml
-- stage: internalSearch
+- stage: fetch
   args:
-    - "pikachu"                                                # literal query — or "$some_column" to use a row field
-    - "Find the search input in the header and submit it"      # optional override prompt
+    - "https://shop.example.com/"
+    - auto_internal_search:
+        query: "pikachu"                                       # literal — or "$some_column" for a row field
+        prompt: "Find the product search input in the site header and submit"
 ```
 
-Failure mode: `"No current page available"` means the previous stage was `wget`. Switch to `visit`.
+If you need full control of the trace (multiple actions, custom ordering), use the explicit form:
+
+```yaml
+- stage: fetch
+  args:
+    - "https://shop.example.com/"
+    -
+      - action: internalSearch
+        args: ["pikachu"]
+      - action: wait
+        args: [".results .product-card"]
+```
+
+Failure mode if you use `- stage: internalSearch` directly with `wget` upstream: `"No current page available"` — Snapshot needs a live browser DOM, which `wget` can't produce.
 
 ### 2. `intelligentExplore` — auto-detect pagination
 
@@ -313,11 +332,12 @@ Same as the section above, but applied per item page. Either short form (one pro
 
 ```yaml
 pipeline:
-  - stage: visit               # MUST be a browser open, not wget
-    args: ["https://shop.example.com/"]
-
-  - stage: internalSearch
-    args: ["pikachu"]
+  - stage: fetch                                # NativeFetchStage = Visit + actions + AutoSnapshot
+    args:
+      - "https://shop.example.com/"
+      - auto_internal_search:
+          query: "pikachu"
+          prompt: "Find the product search input in the site header and submit"
 
   - stage: intelligentExplore
     args: ["next page link", 2]
@@ -338,8 +358,9 @@ output:
 
 **Common pitfalls**:
 
-- `wget` before `internalSearch` → Snapshot fails → `"No current page available"`.
-- Running `intelligentExplore`/`intelligentJoin` before `internalSearch` has produced a SERP doc → wrong selectors inferred (the row preference heuristic doesn't see a navigated page).
+- Using `- stage: internalSearch` as if it were a pipeline stage. It isn't a canonical stage — put the action in the fetch trace (`auto_internal_search:` shortcut, or explicit `actions:` list).
+- Same applies to `IntelligentAction`: there is no `intelligentAction` stage — `action: intelligent, query: "…"` goes inside a fetch trace; or use `intelligent_join` (which accepts an `actionPrompt` as 2nd arg) when you want "act then follow N links" in one step.
+- Running `intelligentExplore` / `intelligentJoin` before the SERP-producing fetch → wrong selectors inferred (the row preference heuristic doesn't see a navigated page).
 - `iextract` prompt without `as <col>` aliases → no column names to bind; rephrase as `field desc as col_name, …`.
 
 There's also a **split form** for these stages — `inferNavigationSelector` / `inferJoinSelector` / `inferSelector` produce `_nav_selector` / `_join_selector` / `_inferred_selector` literal fields that downstream native stages consume with `$_nav_selector` references. Use the split form when you want the inferred selector to be observable in the row schema or to be reused by multiple downstream stages. The combined `intelligentExplore`/`intelligentJoin` form is simpler when each inference feeds exactly one consumer.
