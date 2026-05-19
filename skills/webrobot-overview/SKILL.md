@@ -138,6 +138,27 @@ The only platform that ticks all five:
 2. **Open-source vertical templates** — reference verticals on `github.com/WebRobot-Ltd`. Startups fork them to launch their own SaaS on WebRobot's BYOC. Our revenue: platform license. Theirs: vertical SaaS.
 3. **Plugin Marketplace** — free directory now → revenue share later. **The strategic asset.** As of May 2026 the customer-side billing loop is live (Stripe Invoice + Connect Transfer end-of-month). See `/webrobot-admin` for operational details.
 
+## Interactive demo wizard — point-and-click pipeline builder
+
+A self-service browser UI at `portal.webrobot.eu` lets developers and system integrators
+build a WebRobot `pipeline_yaml` interactively: load any URL in a server-side
+Camoufox tab, navigate the page (record clicks, typing, scrolls), let PTA + LLM
+infer repeating-row containers and field selectors, and export the result as a
+ready-to-run pipeline manifest. Same REST endpoints can be embedded in custom
+integrators' UIs (BYOC pattern — caller's `organizationId` resolves the LLM key
+from `cloud_credentials`, no shared secrets to manage).
+
+Full developer reference (picker modes, REST endpoints, PTA flow, action/trace
+YAML format, when to use the wizard vs. hand-write YAML) lives in the
+**`webrobot-pipeline` skill** under "Interactive pipeline designer — the demo
+wizard". Highlights:
+
+- **Stage-and-commit recording**: clicks/types stage locally; user presses **▶ Send** to replay the batch on Camoufox in one round-trip. Avoids the partial-trace race where a search submit fires before the typing arrives.
+- **Multi-sample selector mode** (📍 Repeating): click 2+ examples of a repeating link → algorithm intersects their CSS paths and produces a selector matching all siblings. Perfect for `intelligentExplore` / `wgetExplore` link selectors.
+- **PTA segment inference**: 6-strategy algorithmic detection of repeating containers (majority-tag BFS, semantic class names, data-testid groups, …) + LLM picker, exposed at `POST /webrobot/api/demo/wizard/infer-segment`.
+- **Trace pause + resume across stages**: keep the Camoufox tab parked between stages so the next picker session resumes on the same page.
+- **Apply trace to `{fetch, explore, join}`** (the YAML-trace-capable stages — `visit` is `fetch` with a `Visit` first-action, not a separate target).
+
 ## Open-source vertical templates (current)
 
 Reference implementations on `github.com/WebRobot-Ltd` — proof startups build vertical SaaS on WebRobot in days, not quarters.

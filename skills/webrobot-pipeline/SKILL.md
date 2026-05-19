@@ -479,6 +479,136 @@ See `/webrobot-python-extension` for full registration modes.
 
 Always run validation before `mcp__webrobot__run_pipeline`.
 
+## Interactive pipeline designer — the demo wizard
+
+A self-service browser UI that lets developers and system integrators
+**build a `pipeline_yaml` interactively** by driving a real browser,
+recording the navigation as a `trace:`, and inferring CSS selectors
+with PTA + LLM. Runs as a public, unauthenticated wizard against the
+demo organization's credentials; the same REST endpoints can be wired
+into custom integrators' UIs (BYOC: caller passes their own
+`organizationId` and the backend pulls that org's LLM key from
+`cloud_credentials`).
+
+The full UX lives in the Vue 3 component `DemoApp.vue` in the public
+VitePress portal (`portal.webrobot.eu`); the REST surface is exposed
+by `DemoPlugin` under `@Path("/webrobot/api/demo")`.
+
+### Picker modes
+
+| Mode | What the user does | Output (postMessage to parent) |
+|---|---|---|
+| `selector-single` | Click ONE element → get a specific CSS path (`div.x > a:nth-of-type(2)`) | `webrobot-pick-selector` |
+| `selector-list` | Click ONE element → CSS path WITHOUT `:nth-of-type`, generalises to siblings | same |
+| `multi-sample` ("📍 Repeating") | Click 2+ examples of a repeating link/card → algorithm intersects tag+class paths and walks the longest common right-suffix until a selector matches all seeds via `querySelectorAll`. Used for `intelligentExplore` / `wgetExplore` / `visitExplore` link selectors. | `webrobot-pick-multi-sample` with selector + match count |
+| `multi-field` | Click each field on a card → adds rows to `extract` / `flatSelect` `_fields` | `webrobot-pick-multi-field` per click |
+| `action-record` | Navigate the page interactively (type, click, scroll). Actions stage locally and are sent in batches | `webrobot-pick-actions` (committed list) |
+| `ai-magic` | Describe in natural language, LLM returns candidate selectors with confidence | colored highlights + cards |
+
+### Camoufox mirror strategy (`pickerStrategy = 'cmf'`)
+
+The iframe renders an HTML **snapshot** from a server-side Camoufox tab
+(`/wizard/cmf/open`). Every click/type fires `/wizard/cmf/step` which
+replays on Camoufox, then returns the post-action HTML to refresh the
+iframe. **It's a mirror, not a real browser** — expect a 3–10s delay
+per round-trip on JS-heavy sites. The wizard shows a loading overlay
+during each step plus an address-bar row with the current URL and a
+Back button (server-side `page.goBack()`).
+
+The wizard runs in **stage-and-commit** mode:
+
+1. Clicks/types stage *locally* into `pickerActions` (iframe doesn't navigate yet).
+2. The user composes a sequence (type a query, click submit) and presses **▶ Send**.
+3. The whole batch goes in ONE `/cmf/step` call — Camoufox replays, the iframe refreshes once, and actions move from `pickerActions` (staged) to `committedActions` (replayed).
+4. Only AFTER commit does the green "Apply trace to" panel appear with a stage-target dropdown filtered to `{fetch, explore, join}` — those are the stages whose YAML accepts a `trace:` block. `visit` is NOT a separate target: it's syntactic sugar for `fetch` whose trace starts with the `Visit` action.
+
+Auto-send shortcut: clicking a non-editable target (link, button, submit) commits the queue immediately — no need for explicit ▶ Send when navigating.
+
+### Trace pause + resume across stages
+
+"💾 Save trace & keep session for next stage →" stashes the live
+Camoufox session instead of releasing it. When the user opens the
+picker again on the next stage, a blue resume banner rebinds the
+iframe to the parked tab without a fresh `/cmf/open` — same URL,
+cookies, history. Server-side TTL is 5 min idle.
+
+### REST endpoints (for custom integrators)
+
+All under `/webrobot/api/demo/wizard/` on the Jersey API. Public /
+anonymous on the demo plugin; custom integrators that want to drive
+this from their own UI can call the same endpoints from any HTTP
+client.
+
+| Endpoint | Purpose | Body / Returns |
+|---|---|---|
+| `POST /cmf/open` | Spawn a Camoufox tab, navigate to URL, return rendered HTML | `{url}` → `{session_id, current_url, html}` |
+| `POST /cmf/step` | Replay one or more actions on a session | `{session_id, actions: [{type, selector, text, ms}]}` → `{session_id, current_url, html}` |
+| `DELETE /cmf/{sessionId}` | Release the tab early (otherwise reaped at 5 min idle) | `{session_id, closed: bool}` |
+| `POST /wizard/infer-segment` | PTA + LLM segment-selector inference (for `flatSelect` containers) | `{url, segmentation_prompt}` → `{segment_selector, raw_pta, llm_provider}` |
+| `POST /wizard/infer-fields` | LLM extracts a list of `{selector, as, method}` for an `extract` / `flatSelect` row | `{url, intent, container_selector?, stage_name}` → `{algo, llm, raw_llm}` |
+| `POST /wizard/infer-selector` | LLM picks one CSS selector from a NL intent | similar |
+| `POST /wizard/infer-actions` | LLM proposes a Click/Type/Wait action trace for a NL intent | similar |
+| `GET /wizard/proxy?url=...` | Static-snapshot fetch (wget strategy, no live session) | rewritten HTML with `picker.js` injected |
+
+Action types accepted by `/cmf/step`: `Click`, `Type`, `Wait`, `WaitFor`, `Scroll`, `Back`. The server runs each through a **resilient click ladder** (strict 3s → force 3s → JS `el.click()`) and serialises per-session operations so concurrent batches don't poison the Playwright driver.
+
+### Session identity is encoded in `session_id`
+
+`session_id` has the shape `<pod-ip>::<uuid>` (e.g. `10.42.5.123::a9f5...`). With >1 Jersey replica, `/cmf/step` and `/cmf/{id}` DELETE on the "wrong" pod automatically HTTP-proxy to the owner pod. Legacy bare-UUID ids still work and are treated as local-only. **Custom integrators can ignore the encoding entirely** — just round-trip whatever the open endpoint returned.
+
+### PTA segment inference
+
+`POST /wizard/infer-segment` shells out to `pta_flat_segment_infer.py`
+(under `webrobot-etl/scripts/` on the running pod, packaged into the
+Jersey image at `/opt/webrobot-etl/scripts/`). The script runs **PTA
+L1** — 6 algorithmic strategies for repeating-wrapper detection:
+
+1. **Majority-tag BFS** — parents whose ≥ 60% of direct children share the same tag
+2. **Semantic class attributes** — class names containing hints like `item`, `product`, `card`, `row`, `cell`
+3. **`data-testid` groups** — parents whose children share `data-testid`
+4. **Postbit / forum wrapper** — legacy forum-row pattern
+5. **QuantConnect discussion-thread** — niche, often disabled
+6. **`data-test-comment-date` row groups** — generic comment-row pattern
+
+Top-K candidates are scored (DOM coverage, semantic class names, content richness, link density) and handed to an **LLM picker** that chooses one. If the LLM returns nothing usable, a fallback generic-CSS pass on the full DOM is tried with `BeautifulSoup.select` validation (between configurable min/max matches).
+
+Same Python script powers the production `POST /webrobot/api/extract/direct` endpoint (admin-scoped, BYOC org).
+
+### LLM credential resolution (BYOC, no pod-wide env)
+
+The wizard's LLM-driven steps (segment picker, field inference,
+selector AI Magic, action AI Magic) do **not** read API keys from pod
+env. Both endpoints resolve via the same `LlmCredentialResolver`:
+
+- `/wizard/infer-segment` uses the demo-pipelines org id
+- `DirectExtractionApiV10` requires `body.organizationId` (caller passes it)
+
+The resolver walks `GROQ → OPENAI → ANTHROPIC → TOGETHERAI` in preference order and returns an env-vars map (e.g. `{GROQ_API_KEY: "gsk_..."}`) that gets injected into the Python subprocess via `ProcessBuilder.environment()`. **Integrators that want to use PTA / LLM endpoints just need to seed a `cloud_credentials` row for their org** — no K8s secret juggling required.
+
+### Output: the `trace:` YAML format
+
+The wizard's committed actions are serialised to YAML and accepted by
+the runtime stages `{fetch, explore, join}`. The format:
+
+```yaml
+- stage: fetch
+  args:
+    - "https://www.ebay.com/"     # url (auto-seeded by the wizard from /cmf/open URL when empty)
+  trace:
+    - Type("#gh-ac", "notebook")
+    - Click("#gh-search-btn")
+    - Wait(1000)
+    - Scroll(0)
+```
+
+Supported in the YAML: `Click("sel")`, `Type("sel", "text")`, `Wait(ms)`, `Scroll(y)`. Plus the special `Visit` first-action that switches `fetch` from HTTP to browser mode. The wizard's `Back` action is modal-only — it doesn't appear in the committed YAML.
+
+### When to use the wizard vs. write YAML by hand
+
+- **Wizard**: target site is JS-heavy, has anti-bot, or requires multi-step navigation (search form → filter clicks → infinite-scroll loads) AND the selectors aren't obvious from page source. The browser-driven mirror lets integrators see exactly what the runtime will see, and PTA + AI Magic produce starting selectors they only refine.
+- **Hand-written YAML**: target is a stable, well-known API or simple HTML page where the selectors are already known. Faster, no LLM round-trips.
+- **Hybrid**: open the wizard to record the `trace:` of an `auto_internal_search` flow on a JS-heavy storefront, then hand-edit the downstream `intelligentExplore` / `iextract` stages.
+
 ## Rules of thumb
 
 - **Never invent stage names.** If `list_stages` doesn't show it, it doesn't exist.
