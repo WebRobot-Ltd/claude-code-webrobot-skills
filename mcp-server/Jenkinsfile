@@ -1,0 +1,232 @@
+pipeline {
+    agent none
+
+    environment {
+        GITHUB_REPOSITORY  = 'WebRobot-Ltd/webrobot-claude-plugin'
+        DOCKER_IMAGE       = 'ghcr.io/webrobot-ltd/webrobot-mcp'
+        DOCKER_TAG         = "${env.BUILD_NUMBER}"
+        DOCKER_REGISTRY    = 'ghcr.io'
+        DOCKER_CREDENTIALS = 'github-token'
+        K8S_NAMESPACE      = 'webrobot'
+        K8S_CONTEXT        = 'webrobot'
+        // The Dockerfile + k8s manifests live under mcp-server/ in the
+        // webrobot-claude-plugin repo. The pipeline runs from repo root and
+        // points Kaniko / kubectl at this subdirectory.
+        BUILD_CONTEXT      = 'mcp-server'
+    }
+
+    parameters {
+        choice(
+            name: 'BUILD_TYPE',
+            choices: ['dev', 'staging', 'production'],
+            description: 'Tipo di build da eseguire'
+        )
+        booleanParam(
+            name: 'REDEPLOY_ONLY',
+            defaultValue: false,
+            description: 'Salta build immagine, esegui solo il deploy K8s'
+        )
+        booleanParam(
+            name: 'PUSH_IMAGE',
+            defaultValue: true,
+            description: 'Push dell\'immagine Docker su GHCR'
+        )
+        booleanParam(
+            name: 'DEPLOY_K8S',
+            defaultValue: true,
+            description: 'Deploy automatico su Kubernetes'
+        )
+    }
+
+    stages {
+        stage('Initialize') {
+            steps {
+                script {
+                    env.DO_DEPLOY = 'false'
+                    def cause = currentBuild.getBuildCauses('hudson.triggers.SCMTrigger$SCMTriggerCause')
+                    if (cause) {
+                        echo 'Build triggerato da SCM — abilito il deploy automatico.'
+                        env.DO_DEPLOY = 'true'
+                    }
+                }
+            }
+        }
+
+        stage('Checkout') {
+            agent any
+            steps {
+                checkout scm
+                script {
+                    echo "🔄 Checkout completato per build ${params.BUILD_TYPE}"
+                    echo "📦 Repository: ${env.GITHUB_REPOSITORY}"
+                    echo "🐳 Immagine:   ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
+                    echo "📁 Context:    ${env.BUILD_CONTEXT}/"
+                }
+            }
+        }
+
+        stage('Lint server.py') {
+            when {
+                expression { !params.REDEPLOY_ONLY }
+            }
+            agent {
+                kubernetes {
+                    label 'python-lint'
+                    yaml '''
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: python
+    image: python:3.12-slim
+    command:
+    - sleep
+    args:
+    - 99d
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+'''
+                }
+            }
+            steps {
+                container('python') {
+                    dir("${env.BUILD_CONTEXT}") {
+                        sh '''
+                            python -m py_compile server.py
+                            echo "✅ server.py compiles"
+                            python - <<'PY'
+import ast, pathlib
+src = pathlib.Path("server.py").read_text()
+ast.parse(src)
+print("✅ AST parse OK")
+PY
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Build & Push Docker Image') {
+            when {
+                expression { !params.REDEPLOY_ONLY && params.PUSH_IMAGE }
+            }
+            agent {
+                kubernetes {
+                    label 'docker'
+                    yaml '''
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: kaniko
+    image: gcr.io/kaniko-project/executor:v1.9.0-debug
+    imagePullPolicy: Always
+    command:
+    - /busybox/cat
+    tty: true
+    volumeMounts:
+      - name: jenkins-docker-cfg
+        mountPath: /kaniko/.docker
+  volumes:
+    - name: jenkins-docker-cfg
+      projected:
+        sources:
+        - secret:
+            name: docker-config-secret
+            items:
+              - key: .dockerconfigjson
+                path: config.json
+'''
+                }
+            }
+            steps {
+                container('kaniko') {
+                    script {
+                        echo "🐳 Build e Push immagine Docker con Kaniko..."
+                        sh """
+                            /kaniko/executor --context=\$(pwd)/${env.BUILD_CONTEXT} \\
+                                --dockerfile=${env.BUILD_CONTEXT}/Dockerfile \\
+                                --destination=${env.DOCKER_IMAGE}:${env.DOCKER_TAG} \\
+                                --destination=${env.DOCKER_IMAGE}:latest \\
+                                --cache=false
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            when {
+                expression { params.DEPLOY_K8S || params.REDEPLOY_ONLY || env.DO_DEPLOY == 'true' }
+            }
+            agent {
+                kubernetes {
+                    label 'kubectl'
+                    yaml '''
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: kubectl
+    image: alpine/k8s:1.28.2
+    command:
+    - sleep
+    args:
+    - 99d
+'''
+                }
+            }
+            steps {
+                container('kubectl') {
+                    script {
+                        def imageTag = params.REDEPLOY_ONLY ? 'latest' : env.DOCKER_TAG
+                        echo "⚙️  Deploy MCP server (tag: ${imageTag})"
+
+                        // Apply manifests, then nudge the image so the rollout
+                        // picks up the new build even when the tag in the
+                        // manifest is `:latest`.
+                        sh """
+                            kubectl apply -f ${env.BUILD_CONTEXT}/k8s/deployment.yaml -n ${env.K8S_NAMESPACE}
+                            kubectl apply -f ${env.BUILD_CONTEXT}/k8s/service.yaml    -n ${env.K8S_NAMESPACE}
+                            kubectl apply -f ${env.BUILD_CONTEXT}/k8s/ingress.yaml    -n ${env.K8S_NAMESPACE}
+
+                            kubectl set image deployment/webrobot-mcp \\
+                                mcp=${env.DOCKER_IMAGE}:${imageTag} \\
+                                -n ${env.K8S_NAMESPACE} || true
+
+                            kubectl rollout status deployment/webrobot-mcp \\
+                                -n ${env.K8S_NAMESPACE} --timeout=5m
+                        """
+
+                        echo "✅ Deploy completato — https://mcp.webrobot.eu/mcp"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            script {
+                echo '✅ Pipeline completata con successo!'
+                echo "🐳 Immagine: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
+                echo "🌐 URL:      https://mcp.webrobot.eu/mcp"
+            }
+        }
+        failure {
+            script {
+                echo '❌ Pipeline fallita — controlla i log per i dettagli'
+            }
+        }
+        always {
+            script {
+                echo "🏁 Build ${env.BUILD_NUMBER} completata (${currentBuild.durationString})"
+            }
+        }
+    }
+}

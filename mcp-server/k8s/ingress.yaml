@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: webrobot-mcp-ingress
+  namespace: webrobot
+  labels:
+    app: webrobot-mcp
+    ingress: mcp
+  annotations:
+    kubernetes.io/ingress.class: "traefik"
+    # MCP streamable-http uses long-lived SSE-style connections — bump the
+    # default Traefik 60s read/idle timeouts so the stream isn't reaped while
+    # the LLM thinks between tool calls.
+    traefik.ingress.kubernetes.io/transport.respondingTimeouts.idleTimeout: "600"
+    traefik.ingress.kubernetes.io/transport.respondingTimeouts.readTimeout: "600"
+    traefik.ingress.kubernetes.io/transport.respondingTimeouts.writeTimeout: "600"
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: mcp.webrobot.eu
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: webrobot-mcp-service
+            port:
+              number: 80
