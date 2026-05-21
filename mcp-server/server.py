@@ -128,6 +128,18 @@ def _fetch_spec(base_url: str) -> dict:
     resp = httpx.get(spec_url, timeout=30.0)
     resp.raise_for_status()
     spec = resp.json()
+    # WebRobot's Jersey OpenAPI emitter currently omits the required `info`
+    # block (only "openapi" + "paths" + "components" come through). Pydantic
+    # in fastmcp rejects the spec with a hard "missing field info" error.
+    # Inject a synthetic block defensively so the MCP boots regardless of
+    # what the server-side emitter chooses to include.
+    if "info" not in spec or not isinstance(spec.get("info"), dict):
+        spec["info"] = {
+            "title": "WebRobot API",
+            "version": str(spec.get("openapi", "1.0.0")),
+            "description": "Auto-injected — Jersey emitter did not provide an info block.",
+        }
+        print("  ! `info` missing from spec — injected synthetic block", file=sys.stderr)
     paths = len((spec.get("paths") or {}))
     print(f"  ✓ spec loaded ({paths} paths)", file=sys.stderr)
     return spec
