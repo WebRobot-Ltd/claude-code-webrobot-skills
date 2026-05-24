@@ -116,7 +116,7 @@ def _build_httpx_client(base_url: str, auth: str, scope: str) -> httpx.AsyncClie
         if auth.startswith("ApiKey "):
             headers["X-API-Key"] = auth[len("ApiKey "):]
     return httpx.AsyncClient(
-        base_url=base_url,
+        base_url=f"{base_url}/api",
         headers=headers,
         timeout=httpx.Timeout(60.0, connect=15.0),
     )
