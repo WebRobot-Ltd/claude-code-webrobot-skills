@@ -45,7 +45,7 @@ Always run `webrobot <group> --help` to see the live subcommand surface. The gro
 | `category` / `agent` | Manage agents (web automation orchestrators) |
 | `job` | Create / list / execute / stop / log jobs |
 | `task` / `execution` | Inspect spawned tasks and execution history |
-| `dataset` / `datasets-legacy` | Upload, list, delete datasets (legacy alias kept) |
+| `dataset` | Upload, list, delete datasets |
 | `pipeline` / `manifest` | Build, validate, apply, run pipeline YAMLs |
 | `wizard` | Interactive scaffolds — `wizard agent`, `wizard pipeline` |
 | `auth` | `auth me`, `auth login`, etc. |
