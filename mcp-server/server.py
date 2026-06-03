@@ -208,11 +208,19 @@ def main() -> None:
         host = os.environ.get("MCP_HOST", "0.0.0.0")
         port = int(os.environ.get("MCP_PORT", "8080"))
         path = os.environ.get("MCP_PATH", "/mcp")
+        # Stateless HTTP → each request is self-contained (no per-pod in-memory
+        # MCP session). Required to run >1 replica without sticky routing: a
+        # stateful server keeps the session in RAM, so initialize on pod A and
+        # follow-up calls on pod B fail with "session not found". Default ON so
+        # the deployment scales horizontally; set MCP_STATELESS=0 to revert.
+        # (FastMCP ≥2.3.4 takes transport settings on run(), not the ctor.)
+        stateless = os.environ.get("MCP_STATELESS", "true").lower() not in ("0", "false", "")
         print(
-            f"  → starting HTTP transport on {host}:{port}{path}",
+            f"  → starting HTTP transport on {host}:{port}{path} (stateless={stateless})",
             file=sys.stderr,
         )
-        mcp.run(transport="http", host=host, port=port, path=path)
+        mcp.run(transport="http", host=host, port=port, path=path,
+                stateless_http=stateless)
     else:
         mcp.run(transport="stdio")
 

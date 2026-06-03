@@ -49,6 +49,10 @@ spec:
           value: "8080"
         - name: MCP_PATH
           value: "/mcp"
+        # Stateless HTTP: no per-pod in-memory session → safe to run >1 replica
+        # without sticky routing. Set to "0" only to revert to stateful mode.
+        - name: MCP_STATELESS
+          value: "true"
         - name: WEBROBOT_API_ENDPOINT
           value: "https://api.webrobot.eu"
         resources:
