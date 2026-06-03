@@ -28,17 +28,16 @@ In Claude Code, add this repository as a plugin source and install the
 /plugin install webrobot
 ```
 
-Claude Code will pick up the skills (under `/`) and start the MCP server
-on demand using the `mcpServers.webrobot` entry in `plugin.json`. The
-server is a single Python process — `mcp-server/server.py` — with only
-one runtime dependency (`mcp>=1.0.0`).
+Claude Code will pick up the skills (under `/`) and connect the `webrobot`
+MCP server (HTTP) from the `mcpServers.webrobot` entry in `plugin.json` —
+the **hosted, official endpoint** `https://mcp.webrobot.eu/mcp`. Nothing to
+install locally (no Python process, no dependencies).
 
-If your environment doesn't have `python3` and `pip install mcp`
-available, install once:
-
-```
-pip install -r mcp-server/requirements.txt
-```
+> The bundled `mcp-server/` (a local Python MCP that wraps the REST API) is
+> retained for offline/self-hosted use, but the plugin now uses the hosted MCP
+> by default. To run it locally instead, set `mcpServers.webrobot` to
+> `{ "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-server/server.py"] }`
+> and `pip install -r mcp-server/requirements.txt`.
 
 ---
 

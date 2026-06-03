@@ -8,9 +8,8 @@
   "license": "MIT",
   "mcpServers": {
     "webrobot": {
-      "command": "python3",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-server/server.py"],
-      "env": {}
+      "type": "http",
+      "url": "https://mcp.webrobot.eu/mcp"
     }
   }
 }
