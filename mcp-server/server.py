@@ -191,13 +191,13 @@ def _register_demo_tools(mcp: FastMCP, client) -> None:
         except Exception:
             return {"raw": r.text[:1000]}
 
-    @mcp.tool
+    @mcp.tool(name="generatePipeline")
     async def generate_pipeline(prompt: str) -> dict:
         """Generate a pipeline manifest from a natural-language description.
         Returns {pipeline_name, pipeline_yaml}."""
         return await _post("/webrobot/api/demo/generate-pipeline", {"prompt": prompt})
 
-    @mcp.tool
+    @mcp.tool(name="saveGeneratedPipeline")
     async def save_generated_pipeline(pipeline_name: str, pipeline_yaml: str,
                                       execute: bool = False, dataset_id: int | None = None) -> dict:
         """Save a pipeline (upsert by name as 'Generated: <name>'). execute=True also
@@ -207,7 +207,7 @@ def _register_demo_tools(mcp: FastMCP, client) -> None:
             body["datasetId"] = dataset_id
         return await _post("/webrobot/api/demo/save-generated-pipeline", body)
 
-    @mcp.tool
+    @mcp.tool(name="wizardValidate")
     async def wizard_validate(yaml: str, session_id: str | None = None) -> dict:
         """VALIDATE a pipeline YAML on Camoufox (dry-run) and return sample rows.
         NB the field is `yaml` (full pipeline YAML), not pipeline_yaml. session_id
@@ -217,7 +217,7 @@ def _register_demo_tools(mcp: FastMCP, client) -> None:
             body["session_id"] = session_id
         return await _post("/webrobot/api/demo/wizard/validate", body)
 
-    @mcp.tool
+    @mcp.tool(name="executeDemo")
     async def execute_demo(pipeline_name: str, limit: int = 10, dataset_id: int | None = None,
                            execution_mode: str = "shared", hetzner_api_key: str | None = None) -> dict:
         """Run a saved demo pipeline. limit clamped 5–10. execution_mode 'shared'
@@ -231,7 +231,7 @@ def _register_demo_tools(mcp: FastMCP, client) -> None:
             body["cloudCredentials"] = {"hetznerApiKey": hetzner_api_key}
         return await _post(f"/webrobot/api/demo/execute/{quote(pipeline_name)}", body)
 
-    @mcp.tool
+    @mcp.tool(name="inferVariables")
     async def infer_variables(pipeline_yaml: str, dataset_columns: list[str] | None = None) -> dict:
         """Detect templatizable variables (keywords in url/selectors) to bind to a
         dataset column for a per-row sweep. Returns {variables:[...]}."""
@@ -240,13 +240,13 @@ def _register_demo_tools(mcp: FastMCP, client) -> None:
             body["dataset_columns"] = dataset_columns
         return await _post("/webrobot/api/demo/wizard/infer-variables", body)
 
-    @mcp.tool
+    @mcp.tool(name="applyVariables")
     async def apply_variables(pipeline_name: str, pipeline_yaml: str) -> dict:
         """Persist a templatized pipeline (rewrites + saves the parameterized YAML)."""
         return await _post("/webrobot/api/demo/wizard/apply-variables",
                            {"pipeline_name": pipeline_name, "pipeline_yaml": pipeline_yaml})
 
-    @mcp.tool
+    @mcp.tool(name="cmfOpen")
     async def cmf_open(url: str, country: str | None = None) -> dict:
         """Open a URL in a fresh Camoufox designer session (returns session_id +
         rewritten html). country = ISO-2 geo (DataImpulse __cr.<country> proxy)."""
@@ -255,7 +255,7 @@ def _register_demo_tools(mcp: FastMCP, client) -> None:
             body["country"] = country
         return await _post("/webrobot/api/demo/wizard/cmf/open", body)
 
-    @mcp.tool
+    @mcp.tool(name="wizardInferSelector")
     async def wizard_infer_selector(intent: str, url: str | None = None,
                                     html: str | None = None, stage_name: str | None = None) -> dict:
         """Infer a CSS selector for `intent` on a page (pass url OR pre-rendered html)."""
@@ -265,7 +265,7 @@ def _register_demo_tools(mcp: FastMCP, client) -> None:
                 body[k] = v
         return await _post("/webrobot/api/demo/wizard/infer-selector", body)
 
-    @mcp.tool
+    @mcp.tool(name="wizardInferFields")
     async def wizard_infer_fields(intent: str, url: str | None = None, html: str | None = None,
                                   container_selector: str | None = None, stage_name: str | None = None) -> dict:
         """Infer field selectors (comma-list `intent`) within an optional
@@ -277,7 +277,7 @@ def _register_demo_tools(mcp: FastMCP, client) -> None:
                 body[k] = v
         return await _post("/webrobot/api/demo/wizard/infer-fields", body)
 
-    @mcp.tool
+    @mcp.tool(name="wizardInferSegment")
     async def wizard_infer_segment(url: str | None = None, html: str | None = None,
                                    segmentation_prompt: str | None = None) -> dict:
         """Infer the repeating-row segment selector (PTA) for flatSelect. url OR html."""
