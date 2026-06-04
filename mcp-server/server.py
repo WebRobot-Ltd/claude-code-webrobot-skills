@@ -329,6 +329,14 @@ def _register_demo_tools(mcp: FastMCP, client) -> None:
             body["embedding_model"] = embedding_model
         return await _post("/webrobot/api/demo/rag/index", body)
 
+    @mcp.tool(name="webSearch")
+    async def web_search(query: str, num: int = 5) -> dict:
+        """Search the web (Google) to find pages/sites/context that SUPPORT setting
+        up a scrape — locate a target listing/detail page, find docs, or verify a
+        fact. Returns {results:[{title, link, snippet, source}]}. This is discovery
+        only; scrape the chosen URL with the WebRobot pipeline/Camoufox tools."""
+        return await _get("/webrobot/api/demo/search", {"q": query, "num": num})
+
     @mcp.tool(name="ragIndexStatus")
     async def rag_index_status(index_name: str, project_name: str | None = None) -> dict:
         """Indexing status of the documents in a RAG index (LlamaCloud parses +
