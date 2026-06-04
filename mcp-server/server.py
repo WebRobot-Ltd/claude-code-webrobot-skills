@@ -191,6 +191,15 @@ def _register_demo_tools(mcp: FastMCP, client) -> None:
         except Exception:
             return {"raw": r.text[:1000]}
 
+    async def _get(path: str, params: dict | None = None):
+        r = await client.get(path, params={k: v for k, v in (params or {}).items() if v is not None})
+        if r.status_code >= 400:
+            return {"error": f"HTTP {r.status_code}", "detail": r.text[:600]}
+        try:
+            return r.json()
+        except Exception:
+            return {"raw": r.text[:1000]}
+
     @mcp.tool(name="generatePipeline")
     async def generate_pipeline(prompt: str) -> dict:
         """Generate a pipeline manifest from a natural-language description.
@@ -319,6 +328,14 @@ def _register_demo_tools(mcp: FastMCP, client) -> None:
         if embedding_model:
             body["embedding_model"] = embedding_model
         return await _post("/webrobot/api/demo/rag/index", body)
+
+    @mcp.tool(name="ragIndexStatus")
+    async def rag_index_status(index_name: str, project_name: str | None = None) -> dict:
+        """Indexing status of the documents in a RAG index (LlamaCloud parses +
+        embeds asynchronously). Returns {total, indexed, ready, by_status,
+        files:[{name,status}]}. Poll until ready=true before relying on ragQuery."""
+        return await _get("/webrobot/api/demo/rag/status",
+                          {"index_name": index_name, "project_name": project_name})
 
 
 def build_server() -> FastMCP:
