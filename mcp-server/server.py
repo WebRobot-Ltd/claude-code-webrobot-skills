@@ -145,16 +145,147 @@ def _fetch_spec(base_url: str) -> dict:
     return spec
 
 
+# Demo POST endpoints whose Jersey handlers read a raw Map → their OpenAPI
+# requestBody is an opaque generic object ({additionalProperties}), so the
+# auto-generated tools don't tell the agent which fields to send. We EXCLUDE
+# them from from_openapi and register explicit, typed replacements below.
+_DEMO_OPAQUE_EXCLUDE = [
+    r"^/webrobot/api/demo/generate-pipeline$",
+    r"^/webrobot/api/demo/save-generated-pipeline$",
+    r"^/webrobot/api/demo/wizard/validate$",
+    r"^/webrobot/api/demo/execute/.*",
+    r"^/webrobot/api/demo/wizard/cmf/open$",
+    r"^/webrobot/api/demo/wizard/infer-selector$",
+    r"^/webrobot/api/demo/wizard/infer-fields$",
+    r"^/webrobot/api/demo/wizard/infer-segment$",
+    r"^/webrobot/api/demo/wizard/infer-variables$",
+    r"^/webrobot/api/demo/wizard/apply-variables$",
+]
+
+
 def _route_maps_for_scope(scope: str) -> list[RouteMap]:
     """First match wins. EXCLUDE drops the operation entirely."""
     if scope == "demo":
-        return [
+        maps = [RouteMap(pattern=p, mcp_type=MCPType.EXCLUDE) for p in _DEMO_OPAQUE_EXCLUDE]
+        maps += [
             RouteMap(pattern=r"^/webrobot/api/demo/.*", mcp_type=MCPType.TOOL),
             RouteMap(pattern=r".*", mcp_type=MCPType.EXCLUDE),
         ]
+        return maps
     # full: keep everything as Tool (don't promote GETs to Resources — most
     # MCP clients today drive Tools well and Resources less so).
     return [RouteMap(pattern=r".*", mcp_type=MCPType.TOOL)]
+
+
+def _register_demo_tools(mcp: FastMCP, client) -> None:
+    """Explicit, TYPED replacements for the opaque demo POST endpoints (whose
+    OpenAPI body is a generic object). Field names match the Jersey handlers."""
+    from urllib.parse import quote
+
+    async def _post(path: str, payload: dict):
+        r = await client.post(path, json=payload)
+        if r.status_code >= 400:
+            return {"error": f"HTTP {r.status_code}", "detail": r.text[:600]}
+        try:
+            return r.json()
+        except Exception:
+            return {"raw": r.text[:1000]}
+
+    @mcp.tool
+    async def generate_pipeline(prompt: str) -> dict:
+        """Generate a pipeline manifest from a natural-language description.
+        Returns {pipeline_name, pipeline_yaml}."""
+        return await _post("/webrobot/api/demo/generate-pipeline", {"prompt": prompt})
+
+    @mcp.tool
+    async def save_generated_pipeline(pipeline_name: str, pipeline_yaml: str,
+                                      execute: bool = False, dataset_id: int | None = None) -> dict:
+        """Save a pipeline (upsert by name as 'Generated: <name>'). execute=True also
+        runs it; dataset_id attaches a pre-uploaded input dataset."""
+        body = {"pipeline_name": pipeline_name, "pipeline_yaml": pipeline_yaml, "execute": execute}
+        if dataset_id is not None:
+            body["datasetId"] = dataset_id
+        return await _post("/webrobot/api/demo/save-generated-pipeline", body)
+
+    @mcp.tool
+    async def wizard_validate(yaml: str, session_id: str | None = None) -> dict:
+        """VALIDATE a pipeline YAML on Camoufox (dry-run) and return sample rows.
+        NB the field is `yaml` (full pipeline YAML), not pipeline_yaml. session_id
+        reuses a live designer session. Returns {valid, records, record_count, steps}."""
+        body = {"yaml": yaml}
+        if session_id:
+            body["session_id"] = session_id
+        return await _post("/webrobot/api/demo/wizard/validate", body)
+
+    @mcp.tool
+    async def execute_demo(pipeline_name: str, limit: int = 10, dataset_id: int | None = None,
+                           execution_mode: str = "shared", hetzner_api_key: str | None = None) -> dict:
+        """Run a saved demo pipeline. limit clamped 5–10. execution_mode 'shared'
+        (default) or 'byoc' (needs hetzner_api_key → runs on the user's Hetzner VMs).
+        Returns an execution map with execution_id (poll the output/status tools)."""
+        params: dict = {"limit": limit}
+        if dataset_id is not None:
+            params["datasetId"] = dataset_id
+        body: dict = {"parameters": params, "executionMode": execution_mode}
+        if execution_mode.lower() == "byoc" and hetzner_api_key:
+            body["cloudCredentials"] = {"hetznerApiKey": hetzner_api_key}
+        return await _post(f"/webrobot/api/demo/execute/{quote(pipeline_name)}", body)
+
+    @mcp.tool
+    async def infer_variables(pipeline_yaml: str, dataset_columns: list[str] | None = None) -> dict:
+        """Detect templatizable variables (keywords in url/selectors) to bind to a
+        dataset column for a per-row sweep. Returns {variables:[...]}."""
+        body: dict = {"pipeline_yaml": pipeline_yaml}
+        if dataset_columns:
+            body["dataset_columns"] = dataset_columns
+        return await _post("/webrobot/api/demo/wizard/infer-variables", body)
+
+    @mcp.tool
+    async def apply_variables(pipeline_name: str, pipeline_yaml: str) -> dict:
+        """Persist a templatized pipeline (rewrites + saves the parameterized YAML)."""
+        return await _post("/webrobot/api/demo/wizard/apply-variables",
+                           {"pipeline_name": pipeline_name, "pipeline_yaml": pipeline_yaml})
+
+    @mcp.tool
+    async def cmf_open(url: str, country: str | None = None) -> dict:
+        """Open a URL in a fresh Camoufox designer session (returns session_id +
+        rewritten html). country = ISO-2 geo (DataImpulse __cr.<country> proxy)."""
+        body = {"url": url}
+        if country:
+            body["country"] = country
+        return await _post("/webrobot/api/demo/wizard/cmf/open", body)
+
+    @mcp.tool
+    async def wizard_infer_selector(intent: str, url: str | None = None,
+                                    html: str | None = None, stage_name: str | None = None) -> dict:
+        """Infer a CSS selector for `intent` on a page (pass url OR pre-rendered html)."""
+        body = {"intent": intent}
+        for k, v in (("url", url), ("html", html), ("stage_name", stage_name)):
+            if v:
+                body[k] = v
+        return await _post("/webrobot/api/demo/wizard/infer-selector", body)
+
+    @mcp.tool
+    async def wizard_infer_fields(intent: str, url: str | None = None, html: str | None = None,
+                                  container_selector: str | None = None, stage_name: str | None = None) -> dict:
+        """Infer field selectors (comma-list `intent`) within an optional
+        container_selector (flatSelect segment → relative selectors)."""
+        body = {"intent": intent}
+        for k, v in (("url", url), ("html", html),
+                     ("container_selector", container_selector), ("stage_name", stage_name)):
+            if v:
+                body[k] = v
+        return await _post("/webrobot/api/demo/wizard/infer-fields", body)
+
+    @mcp.tool
+    async def wizard_infer_segment(url: str | None = None, html: str | None = None,
+                                   segmentation_prompt: str | None = None) -> dict:
+        """Infer the repeating-row segment selector (PTA) for flatSelect. url OR html."""
+        body: dict = {}
+        for k, v in (("url", url), ("html", html), ("segmentation_prompt", segmentation_prompt)):
+            if v:
+                body[k] = v
+        return await _post("/webrobot/api/demo/wizard/infer-segment", body)
 
 
 def build_server() -> FastMCP:
@@ -192,6 +323,10 @@ def build_server() -> FastMCP:
         name=server_name,
         route_maps=_route_maps_for_scope(scope),
     )
+
+    # The opaque demo POST endpoints were EXCLUDED above; add typed replacements.
+    if scope == "demo":
+        _register_demo_tools(mcp, client)
 
     # Liveness — used by k8s probes when transport=http.
     @mcp.custom_route("/health", methods=["GET"])
