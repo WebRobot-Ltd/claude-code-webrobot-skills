@@ -1,20 +1,37 @@
-# WebRobot — Claude Code plugin
+<div align="center">
 
-Claude Code plugin for the [WebRobot ETL](https://webrobot.eu) platform.
-Bundles:
+# 🤖 WebRobot — Claude Code plugin &amp; MCP server
 
-- **10 skills** — invokable as slash commands inside Claude Code — that
-  document pipelines, the CLI, the public SDKs, plugin development,
-  and the platform overview.
-- A **Model Context Protocol (MCP) server** that exposes the WebRobot
-  REST API as a set of typed tools Claude can call directly (list /
-  create / execute / inspect projects, jobs, pipelines, agents,
-  datasets, cloud credentials, LLM providers, plus manifest
-  validate/apply and ETL stage discovery).
+### Turn Claude Code into a data engineer — scrape the web, build Spark ETL pipelines, and run them, all by conversation.
 
-The plugin lives at
-[github.com/WebRobot-Ltd/webrobot-claude-plugin](https://github.com/WebRobot-Ltd/webrobot-claude-plugin)
-and ships as `.claude-plugin/plugin.json` + `skills/` + `mcp-server/`.
+[![MCP](https://img.shields.io/badge/MCP-server-7c4fb5)](https://mcp.webrobot.eu/mcp)
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-5b54ec)](https://github.com/WebRobot-Ltd/claude-code-webrobot-skills)
+[![Live demo](https://img.shields.io/badge/%E2%96%B6-live%20demo-00bcd4)](https://portal.webrobot.eu/chat.html)
+[![Docs](https://img.shields.io/badge/docs-webrobot.eu-333)](https://docs.webrobot.eu)
+
+<!-- DEMO GIF — drop docs/media/demo.gif here once recorded. Shot list: docs/media/README.md -->
+<!-- ![WebRobot in Claude Code](docs/media/demo.gif) -->
+**🎬 Demo GIF coming soon** — meanwhile try the **[▶ live demo](https://portal.webrobot.eu/chat.html)**.
+
+</div>
+
+> **WebRobot is "ETL for AI Agents"** — a **Spark-native**, **EU-sovereign (BYOC)**
+> data platform that AI agents operate end to end: *from a URL to an insight in a
+> conversation.* This plugin is the front door from Claude Code.
+
+It bundles:
+
+- **10 skills** — invokable as slash commands inside Claude Code — covering
+  pipelines, the CLI, the public SDKs, plugin development, and the platform overview.
+- A hosted **Model Context Protocol (MCP) server** that exposes the WebRobot
+  REST API as typed tools Claude can call directly (list / create / execute /
+  inspect projects, jobs, pipelines, agents, datasets, cloud credentials, LLM
+  providers, plus manifest validate/apply and ETL stage discovery).
+
+Repo: [github.com/WebRobot-Ltd/claude-code-webrobot-skills](https://github.com/WebRobot-Ltd/claude-code-webrobot-skills)
+— ships as `.claude-plugin/plugin.json` + `skills/` + `mcp-server/`.
+
+> ⭐ **If this is useful, star the repo** — it helps other data &amp; AI engineers find it.
 
 ---
 
