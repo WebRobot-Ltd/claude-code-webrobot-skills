@@ -287,6 +287,26 @@ def _register_demo_tools(mcp: FastMCP, client) -> None:
                 body[k] = v
         return await _post("/webrobot/api/demo/wizard/infer-segment", body)
 
+    @mcp.tool(name="ragQuery")
+    async def rag_query(question: str, index_name: str, top_k: int = 5,
+                        project_name: str | None = None,
+                        filters: dict | None = None) -> dict:
+        """Retrieve the top-k most relevant knowledge/style chunks from an external
+        RAG index (LlamaCloud) to GROUND the answer in uploaded documents — pure
+        retrieval, the agent itself reasons over the returned chunks.
+
+        index_name selects the per-profile knowledge index (e.g. a founder's own
+        index). top_k clamps how many chunks to return (default 5). Optional
+        project_name (default 'webrobot') and metadata filters {key: value}.
+        Returns {hits: [{text, score, metadata}], count, index_name}. The provider
+        API key is resolved server-side from cloud_credentials — NEVER pass keys here."""
+        body: dict = {"question": question, "index_name": index_name, "top_k": top_k}
+        if project_name:
+            body["project_name"] = project_name
+        if filters:
+            body["filters"] = filters
+        return await _post("/webrobot/api/rag/query", body)
+
 
 def build_server() -> FastMCP:
     scope = os.environ.get("MCP_SCOPE", "full").lower()
