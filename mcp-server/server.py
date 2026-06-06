@@ -316,18 +316,11 @@ def _register_demo_tools(mcp: FastMCP, client) -> None:
             body["filters"] = filters
         return await _post("/webrobot/api/demo/rag/query", body)
 
-    @mcp.tool(name="ragEnsureIndex")
-    async def rag_ensure_index(index_name: str, project_name: str | None = None,
-                               embedding_model: str | None = None) -> dict:
-        """Ensure a RAG index (LlamaCloud managed pipeline) exists, creating it
-        with a HuggingFace embedding model if missing. Returns {pipeline_id,
-        created}. Use before ingesting documents into a new per-profile index."""
-        body: dict = {"index_name": index_name}
-        if project_name:
-            body["project_name"] = project_name
-        if embedding_model:
-            body["embedding_model"] = embedding_model
-        return await _post("/webrobot/api/demo/rag/index", body)
+    # ragEnsureIndex (RAG index creation) is intentionally NOT exposed to the agent.
+    # Creating/writing RAG indexes is admin-only: the public demo /rag/index (and
+    # /rag/ingest) write endpoints were removed to prevent RAG poisoning. The agent
+    # gets READ-ONLY RAG access (ragQuery + ragIndexStatus); writes go through the
+    # authenticated main API (RagQueryApiV10), admin only.
 
     @mcp.tool(name="webSearch")
     async def web_search(query: str, num: int = 5) -> dict:
