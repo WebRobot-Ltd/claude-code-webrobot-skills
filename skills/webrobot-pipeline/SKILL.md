@@ -286,16 +286,22 @@ The canonical, declarative way to combine "open page → fill search → snapsho
 
 If you need full control of the trace (multiple actions, custom ordering), use the explicit form:
 
+⚠️ **VERIFIED 2026-06-07 against the deployed jar: `internalSearch` is NOT a registered `ActionFactory`.** A manual `- action: internalSearch` in a trace throws `ActionFactory 'internalSearch' not found` and **fails the whole pipeline**. It's reachable ONLY via the `auto_internal_search:` shortcut (NativeFetchStage instantiates `InternalSearchAction` directly, bypassing the registry). For a manual trace use registry actions only (`input`, `click`, `waitforselector`, `wait`, `scroll`, …):
+
 ```yaml
 - stage: fetch
   args:
     - "https://shop.example.com/"
     -
-      - action: internalSearch
-        args: ["pikachu"]
-      - action: wait
+      - action: input              # registry action ✓
+        args: ["input[type=search]", "pikachu"]
+      - action: click
+        args: ["button[type=submit]"]
+      - action: waitforselector
         args: [".results .product-card"]
 ```
+
+For a search box you don't want to hand-target, just use `auto_internal_search:` (it infers input + submit via LLM).
 
 Failure mode if you use `- stage: internalSearch` directly with `wget` upstream: `"No current page available"` — Snapshot needs a live browser DOM, which `wget` can't produce.
 
