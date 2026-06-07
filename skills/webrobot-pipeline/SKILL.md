@@ -263,6 +263,48 @@ Used inside any pipeline that has visited a page to pull structured fields. Alwa
     - "pc_"                     # position 2 = field prefix
 ```
 
+## Multi-source cross-retailer price matching (`sources:` + `match:`) — VERIFIED 2026-06-08
+
+ONE YAML scrapes SEVERAL sources and matches the same product across them. Each `sources.<name>`
+entry is its own mini-`pipeline:`; the parser tags rows with the source name, unions them, then
+`match:` desugars to a `sql_query GROUP BY`. Use `match: key:` (NOT `on:` — YAML 1.1 coerces `on`
+to a boolean).
+
+```yaml
+metadata: { geo: gb, proxy_mode: sticky_session }     # anti-block: geo + sticky IP + retry-on-block
+sources:
+  viking:
+    pipeline:
+      - { stage: fetch, args: ["https://www.viking-direct.co.uk/en/query?text=epson%20printer"] }
+      - { stage: intelligentFlatSelect, args: ["the product result cards", "full product title as model_key, price with currency as price", ""] }
+  staples:
+    pipeline:
+      - stage: fetch                                  # SPA/Algolia site → homepage + auto search
+        args:
+          - "https://www.staples.co.uk/"
+          - auto_internal_search: { query: "epson printer", prompt: "Find the search input and submit", wait_ms: 8000 }
+      - { stage: intelligentFlatSelect, args: ["the product result cards", "full product title as model_key, price with currency as price", ""] }
+pipeline:                                             # COMMON tail on the union, BEFORE match
+  - stage: sql_query
+    args:
+      - "SELECT * FROM (SELECT * EXCEPT(model_key), regexp_replace(upper(regexp_extract(model_key, '(?:ET|XP|WF|WP|SC|L|EP)[ -]?[A-Z]?[0-9]{2,6}[A-Z]{0,4}', 0)), '[^A-Z0-9]', '') AS model_key FROM df) WHERE model_key <> ''"
+match: { key: model_key, collect: [model_key, price], min_sources: 1 }
+output: { format: parquet, mode: overwrite, path: "${OUTPUT_PARQUET_PATH}" }
+```
+
+Hard-won lessons (all verified end-to-end):
+- **Match on a NORMALIZED canonical code, never the raw title** — two retailers phrase titles
+  differently, so an exact GROUP BY on the title matches NOTHING. Extract the code (regexp_extract)
+  in a top-level `pipeline:` tail that runs on the union before `match:`.
+- **`auto_internal_search: { …, wait_ms: 8000 }`** — adds a Delay before the snapshot so async/JS
+  SERPs (Algolia/Shopify) render their results; without it you snapshot an empty/homepage page.
+- **Data in `data-*` attributes**: intelligentFlatSelect extracts the ATTRIBUTE value when the
+  inferred column selector is a bare `[data-product-title]` / `[data-price]` (any `[attr]`).
+- **retry-on-block** covers `auto_internal_search` too (CF challenge / no-navigation → fresh sticky IP).
+- Demo output-preview caps display at **≤100** rows (pass `limit=100`; >100 silently resets to 10).
+  Demo total records: `WEBROBOT_DEMO_MAX_RECORDS` env (default 10). Other verticals (sure-bet,
+  real-estate arbitrage, sentiment) reuse the same `sources:` substrate with a different combine step.
+
 ## LLM-driven e-commerce flow — fetch+auto_internal_search → intelligentExplore → intelligentJoin → iextract
 
 Use when CSS selectors are brittle, unknown, or change across categories — e.g. classic e-commerce: search the site, page through results, follow each item to its detail page, extract structured fields.
