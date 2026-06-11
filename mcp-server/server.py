@@ -141,6 +141,40 @@ def _build_httpx_client(base_url: str, scope: str) -> httpx.AsyncClient:
     )
 
 
+def _deopacify_spec(spec: dict) -> int:
+    """Remove request-body OPACITY across the WHOLE spec.
+
+    Jersey endpoints that read a raw `Map<String,Object>` emit a requestBody
+    schema of `{type: object, additionalProperties: {type: object}}`. That
+    constraint forces every body VALUE to itself be an object, so plain string
+    fields (e.g. `yaml`, `csv`, `content`) get dropped before the request is
+    sent — the API then sees an empty/invalid body ("Missing 'yaml' field").
+
+    Relax every such opaque map to `additionalProperties: true` (any JSON value
+    allowed) so free-form bodies pass through unchanged. One pass, all endpoints
+    — no per-endpoint typed wrapper needed. Returns the count relaxed."""
+    count = 0
+
+    def walk(node):
+        nonlocal count
+        if isinstance(node, dict):
+            ap = node.get("additionalProperties")
+            # opaque map: additionalProperties is an object-typed schema with no
+            # own properties (i.e. "any object") → allow any JSON value instead.
+            if isinstance(ap, dict) and ap.get("type") == "object" and "properties" not in ap:
+                node["additionalProperties"] = True
+                count += 1
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(spec.get("paths", {}))
+    walk(spec.get("components", {}))
+    return count
+
+
 def _fetch_spec(base_url: str) -> dict:
     spec_url = f"{base_url}/api/openapi.json"
     print(f"  → fetching OpenAPI spec from {spec_url}", file=sys.stderr)
@@ -159,8 +193,9 @@ def _fetch_spec(base_url: str) -> dict:
             "description": "Auto-injected — Jersey emitter did not provide an info block.",
         }
         print("  ! `info` missing from spec — injected synthetic block", file=sys.stderr)
+    relaxed = _deopacify_spec(spec)
     paths = len((spec.get("paths") or {}))
-    print(f"  ✓ spec loaded ({paths} paths)", file=sys.stderr)
+    print(f"  ✓ spec loaded ({paths} paths, de-opacified {relaxed} map bodies)", file=sys.stderr)
     return spec
 
 
