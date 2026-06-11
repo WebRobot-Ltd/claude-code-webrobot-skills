@@ -168,6 +168,17 @@ _DEMO_OPAQUE_EXCLUDE = [
 ]
 
 
+# Full-scope (authenticated main API) endpoints whose auto-generated tool is
+# unusable, EXCLUDED and replaced by typed tools in _register_full_tools:
+#  - upload-dataset/* : Jersey FormDataMultiPart -> multipart, MCP hits HTTP 415.
+#  - datasets/upload-json : reads a raw Map<String,Object> -> opaque OpenAPI body
+#    ({additionalProperties}), so the agent isn't told which fields to send.
+_FULL_OPAQUE_EXCLUDE = [
+    r"^/webrobot/api/demo/upload-dataset/.*",
+    r"^/webrobot/api/datasets/upload-json$",
+]
+
+
 def _route_maps_for_scope(scope: str) -> list[RouteMap]:
     """First match wins. EXCLUDE drops the operation entirely."""
     if scope == "demo":
@@ -178,8 +189,51 @@ def _route_maps_for_scope(scope: str) -> list[RouteMap]:
         ]
         return maps
     # full: keep everything as Tool (don't promote GETs to Resources — most
-    # MCP clients today drive Tools well and Resources less so).
-    return [RouteMap(pattern=r".*", mcp_type=MCPType.TOOL)]
+    # MCP clients today drive Tools well and Resources less so), minus the
+    # opaque/multipart endpoints replaced by typed tools below.
+    maps = [RouteMap(pattern=p, mcp_type=MCPType.EXCLUDE) for p in _FULL_OPAQUE_EXCLUDE]
+    maps += [RouteMap(pattern=r".*", mcp_type=MCPType.TOOL)]
+    return maps
+
+
+def _register_full_tools(mcp: FastMCP, client) -> None:
+    """Typed replacements for the opaque/multipart endpoints in FULL scope
+    (authenticated main API). Field names match DatasetCrudApiV10.uploadDatasetJson."""
+    async def _post(path: str, payload: dict):
+        r = await client.post(path, json=payload)
+        if r.status_code >= 400:
+            return {"error": f"HTTP {r.status_code}", "detail": r.text[:600]}
+        try:
+            return r.json()
+        except Exception:
+            return {"raw": r.text[:1000]}
+
+    @mcp.tool(name="uploadDatasetJson")
+    async def upload_dataset_json(name: str, content: str | None = None,
+                                  content_base64: str | None = None,
+                                  filename: str = "dataset.csv",
+                                  dataset_type: str = "input",
+                                  organization_id: str | None = None) -> dict:
+        """Upload a dataset to the authenticated main API via JSON (NOT multipart).
+        Pass the CSV either as raw text in `content` (first line = header) or
+        base64 in `content_base64` (use base64 for large/binary files). `dataset_type`
+        is 'input' or 'output'. `organization_id` scopes the dataset to a concrete
+        org — REQUIRED when calling as super_admin; ignored otherwise (taken from the
+        auth context). Stored under the per-org MinIO prefix with a random dir.
+        Returns {datasetId, name, organizationId, storagePath, filePath}.
+
+        This is the real (non-demo, no size-cap) upload path; the demo create-dataset
+        tool is size-capped and unscoped."""
+        body: dict = {"name": name, "filename": filename, "datasetType": dataset_type}
+        if content_base64:
+            body["contentBase64"] = content_base64
+        elif content is not None:
+            body["content"] = content
+        else:
+            return {"error": "BAD_REQUEST", "detail": "pass `content` (CSV text) or `content_base64`"}
+        if organization_id:
+            body["organizationId"] = organization_id
+        return await _post("/webrobot/api/datasets/upload-json", body)
 
 
 def _register_demo_tools(mcp: FastMCP, client) -> None:
@@ -393,9 +447,11 @@ def build_server() -> FastMCP:
         route_maps=_route_maps_for_scope(scope),
     )
 
-    # The opaque demo POST endpoints were EXCLUDED above; add typed replacements.
+    # The opaque/multipart endpoints were EXCLUDED above; add typed replacements.
     if scope == "demo":
         _register_demo_tools(mcp, client)
+    else:
+        _register_full_tools(mcp, client)
 
     # Liveness — used by k8s probes when transport=http.
     @mcp.custom_route("/health", methods=["GET"])
