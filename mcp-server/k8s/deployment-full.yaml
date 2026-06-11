@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webrobot-mcp-full
+  namespace: webrobot
+  labels:
+    app: webrobot-mcp-full
+    version: v1.0.0
+spec:
+  # Single replica: stateless HTTP, internal-only, low traffic. Bump if needed.
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: webrobot-mcp-full
+  template:
+    metadata:
+      labels:
+        app: webrobot-mcp-full
+        managed-by: kustomize
+        version: v1.0.0
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "timestamp-placeholder"
+    spec:
+      imagePullSecrets:
+      - name: docker-config
+      containers:
+      - name: mcp
+        image: ghcr.io/webrobot-ltd/webrobot-mcp:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        env:
+        - name: MCP_TRANSPORT
+          value: "http"
+        # full scope = ALL /webrobot/api/* paths exposed as tools (244+).
+        # PROXY model: this instance holds NO API key. Each request forwards the
+        # END-USER's own credential (Authorization: Bearer <jwt> or X-API-Key) to
+        # the REST API, which does all auth + per-org RBAC. No shared secret →
+        # safe to expose publicly via Ingress.
+        - name: MCP_SCOPE
+          value: "full"
+        - name: MCP_HOST
+          value: "0.0.0.0"
+        - name: MCP_PORT
+          value: "8080"
+        - name: MCP_PATH
+          value: "/mcp"
+        - name: MCP_STATELESS
+          value: "true"
+        - name: WEBROBOT_API_ENDPOINT
+          value: "https://api.webrobot.eu"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 10001
+          runAsGroup: 10001
+          capabilities:
+            drop:
+            - ALL
+      securityContext:
+        fsGroup: 10001
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler

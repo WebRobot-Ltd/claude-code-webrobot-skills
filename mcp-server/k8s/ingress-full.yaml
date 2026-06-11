@@ -1,0 +1,31 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: webrobot-mcp-full-ingress
+  labels:
+    app: webrobot-mcp-full
+    ingress: mcp-full
+  annotations:
+    kubernetes.io/ingress.class: "traefik"
+    # MCP streamable-http uses long-lived SSE-style connections — bump the
+    # default Traefik 60s read/idle timeouts so the stream isn't reaped while
+    # the LLM thinks between tool calls.
+    traefik.ingress.kubernetes.io/transport.respondingTimeouts.idleTimeout: "600"
+    traefik.ingress.kubernetes.io/transport.respondingTimeouts.readTimeout: "600"
+    traefik.ingress.kubernetes.io/transport.respondingTimeouts.writeTimeout: "600"
+spec:
+  ingressClassName: traefik
+  rules:
+  # Public, but NO server-side credential: every call must carry the caller's
+  # own auth (Bearer/JWT or X-API-Key), which the MCP forwards to the REST API.
+  # Unauthenticated calls get 401 from the API. So public exposure is safe.
+  - host: mcp-full.webrobot.eu
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: webrobot-mcp-full-service
+            port:
+              number: 80

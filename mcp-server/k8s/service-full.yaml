@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: webrobot-mcp-full-service
+  namespace: webrobot
+  labels:
+    app: webrobot-mcp-full
+    service: mcp-full
+spec:
+  # ClusterIP only — NO public exposure (embeds a privileged API key).
+  # Reach it in-cluster at webrobot-mcp-full-service.webrobot.svc:80, or via
+  #   kubectl -n webrobot port-forward svc/webrobot-mcp-full-service 8090:80
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  selector:
+    app: webrobot-mcp-full
+  sessionAffinity: None

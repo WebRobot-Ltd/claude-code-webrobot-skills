@@ -5,6 +5,11 @@ resources:
   - deployment.yaml
   - service.yaml
   - ingress.yaml
+  # Full-scope MCP (all 244+ endpoints) — PROXY: forwards each caller's own
+  # credential to the REST API (no embedded key), publicly exposed.
+  - deployment-full.yaml
+  - service-full.yaml
+  - ingress-full.yaml
 commonLabels:
   app.kubernetes.io/name: webrobot-mcp
   app.kubernetes.io/part-of: webrobot

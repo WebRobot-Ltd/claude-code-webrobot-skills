@@ -29,6 +29,7 @@ from pathlib import Path
 
 import httpx
 from fastmcp import FastMCP
+from fastmcp.server.dependencies import get_http_headers
 from fastmcp.server.openapi import MCPType, RouteMap
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -105,20 +106,38 @@ def _load_config() -> tuple[str, str, str]:
 # ── Server bootstrap ──────────────────────────────────────────────────────────
 
 
-def _build_httpx_client(base_url: str, auth: str, scope: str) -> httpx.AsyncClient:
+async def _forward_client_auth(request: httpx.Request) -> None:
+    """Per-request PROXY hook: copy the END-USER's credential from the incoming
+    MCP HTTP request onto the upstream API call. The MCP holds NO key of its own
+    — authentication + per-org RBAC are entirely the REST API's job
+    (UnifiedAuthFilter). Forwards both `Authorization: Bearer <jwt>` (platform
+    OAuth) and `X-API-Key` (WebRobot key); whichever the client sent."""
+    try:
+        incoming = get_http_headers(include_all=True)
+    except Exception:
+        incoming = {}
+    auth = incoming.get("authorization")
+    api_key = incoming.get("x-api-key")
+    if auth:
+        request.headers["Authorization"] = auth
+    if api_key:
+        request.headers["X-API-Key"] = api_key
+
+
+def _build_httpx_client(base_url: str, scope: str) -> httpx.AsyncClient:
     headers: dict[str, str] = {
         "Accept": "application/json",
         "User-Agent": "webrobot-mcp/2.0",
     }
-    # Auth is meaningful only in `full` scope; demo endpoints don't need it.
-    if scope == "full" and auth:
-        headers["Authorization"] = auth
-        if auth.startswith("ApiKey "):
-            headers["X-API-Key"] = auth[len("ApiKey "):]
+    # full scope = PROXY: forward the caller's own credential per-request (no
+    # baked-in key, so safe to expose publicly). demo scope = public endpoints,
+    # no auth at all.
+    event_hooks = {"request": [_forward_client_auth]} if scope == "full" else {}
     return httpx.AsyncClient(
         base_url=f"{base_url}/api",
         headers=headers,
         timeout=httpx.Timeout(60.0, connect=15.0),
+        event_hooks=event_hooks,
     )
 
 
@@ -417,27 +436,23 @@ def build_server() -> FastMCP:
         print(f"  ! unknown MCP_SCOPE={scope!r}, falling back to 'full'", file=sys.stderr)
         scope = "full"
 
-    base_url, auth, auth_source = _load_config()
+    base_url, _auth, _auth_source = _load_config()
 
-    if scope == "full" and not auth:
-        print(
-            "  ⚠ MCP_SCOPE=full but no credentials found.\n"
-            "    Authenticated endpoints will fail with 401. Set WEBROBOT_API_KEY\n"
-            "    or run with MCP_SCOPE=demo for the public surface only.",
-            file=sys.stderr,
-        )
+    # full scope is a PROXY: the end-user's credential is forwarded per-request
+    # (see _forward_client_auth), so no server-side key is loaded or required.
+    auth_mode = "proxy (per-request client credential)" if scope == "full" else "public/no-auth"
 
     print(
         f"  ┌─ WebRobot MCP\n"
         f"  │  base_url:    {base_url}\n"
         f"  │  scope:       {scope}\n"
-        f"  │  auth source: {auth_source}\n"
+        f"  │  auth:        {auth_mode}\n"
         f"  └─",
         file=sys.stderr,
     )
 
     spec = _fetch_spec(base_url)
-    client = _build_httpx_client(base_url, auth, scope)
+    client = _build_httpx_client(base_url, scope)
 
     server_name = "WebRobot Demo" if scope == "demo" else "WebRobot"
     mcp = FastMCP.from_openapi(
