@@ -191,19 +191,30 @@ spec:
                         // picks up the new build even when the tag in the
                         // manifest is `:latest`.
                         sh """
+                            # demo scope (public, /demo/* only)
                             kubectl apply -f ${env.BUILD_CONTEXT}/k8s/deployment.yaml -n ${env.K8S_NAMESPACE}
                             kubectl apply -f ${env.BUILD_CONTEXT}/k8s/service.yaml    -n ${env.K8S_NAMESPACE}
                             kubectl apply -f ${env.BUILD_CONTEXT}/k8s/ingress.yaml    -n ${env.K8S_NAMESPACE}
 
+                            # full scope (proxy, all endpoints) — same image, different env
+                            kubectl apply -f ${env.BUILD_CONTEXT}/k8s/deployment-full.yaml -n ${env.K8S_NAMESPACE}
+                            kubectl apply -f ${env.BUILD_CONTEXT}/k8s/service-full.yaml    -n ${env.K8S_NAMESPACE}
+                            kubectl apply -f ${env.BUILD_CONTEXT}/k8s/ingress-full.yaml    -n ${env.K8S_NAMESPACE}
+
                             kubectl set image deployment/webrobot-mcp \\
+                                mcp=${env.DOCKER_IMAGE}:${imageTag} \\
+                                -n ${env.K8S_NAMESPACE} || true
+                            kubectl set image deployment/webrobot-mcp-full \\
                                 mcp=${env.DOCKER_IMAGE}:${imageTag} \\
                                 -n ${env.K8S_NAMESPACE} || true
 
                             kubectl rollout status deployment/webrobot-mcp \\
                                 -n ${env.K8S_NAMESPACE} --timeout=5m
+                            kubectl rollout status deployment/webrobot-mcp-full \\
+                                -n ${env.K8S_NAMESPACE} --timeout=5m
                         """
 
-                        echo "✅ Deploy completato — https://mcp.webrobot.eu/mcp"
+                        echo "✅ Deploy completato — demo https://mcp.webrobot.eu/mcp · full https://mcp-full.webrobot.eu/mcp"
                     }
                 }
             }
