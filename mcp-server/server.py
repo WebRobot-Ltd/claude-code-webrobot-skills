@@ -160,6 +160,11 @@ _DEMO_OPAQUE_EXCLUDE = [
     r"^/webrobot/api/demo/wizard/infer-segment$",
     r"^/webrobot/api/demo/wizard/infer-variables$",
     r"^/webrobot/api/demo/wizard/apply-variables$",
+    # Multipart file upload: its Jersey signature is FormDataMultiPart, so the
+    # auto-generated tool serializes the whole multipart object and the MCP
+    # (JSON-RPC, no multipart boundary) hits HTTP 415. Excluded here; replaced
+    # by the typed JSON `uploadDataset` tool below (create-dataset).
+    r"^/webrobot/api/demo/upload-dataset/.*",
 ]
 
 
@@ -199,6 +204,19 @@ def _register_demo_tools(mcp: FastMCP, client) -> None:
             return r.json()
         except Exception:
             return {"raw": r.text[:1000]}
+
+    @mcp.tool(name="uploadDataset")
+    async def upload_dataset(name: str, csv: str) -> dict:
+        """Upload a CSV dataset via JSON (NOT multipart) and create a demo input
+        dataset. Pass the raw CSV text in `csv` (first line = header). Returns
+        {datasetId, name, ...}; pass the returned datasetId to executeDemo /
+        saveGeneratedPipeline as the pipeline input.
+
+        Replaces the auto-generated multipart upload-dataset tool, which fails
+        over MCP with HTTP 415 (JSON-RPC can't send multipart/form-data). Demo
+        scope is size-capped; for large/org-scoped uploads use the authenticated
+        main API (/webrobot/api/datasets/upload-json)."""
+        return await _post("/webrobot/api/demo/create-dataset", {"name": name, "csv": csv})
 
     @mcp.tool(name="generatePipeline")
     async def generate_pipeline(prompt: str) -> dict:
