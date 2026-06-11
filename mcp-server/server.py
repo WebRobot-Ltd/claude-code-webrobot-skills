@@ -230,6 +230,12 @@ _DEMO_OPAQUE_EXCLUDE = [
 _FULL_OPAQUE_EXCLUDE = [
     r"^/webrobot/api/demo/upload-dataset/.*",
     r"^/webrobot/api/datasets/upload-json$",
+    # Manifest apply/validate read a raw Map<String,Object> {yaml:...}. FastMCP
+    # models that as a single free-form `body` param and wraps it, so the API
+    # never sees a top-level `yaml` ("Missing 'yaml' field"). De-opacifying the
+    # spec isn't enough (the wrapper remains) — replaced by typed tools below.
+    r"^/webrobot/api/manifest/apply$",
+    r"^/webrobot/api/manifest/validate$",
 ]
 
 
@@ -288,6 +294,27 @@ def _register_full_tools(mcp: FastMCP, client) -> None:
         if organization_id:
             body["organizationId"] = organization_id
         return await _post("/webrobot/api/datasets/upload-json", body)
+
+    @mcp.tool(name="manifestApply")
+    async def manifest_apply(yaml: str) -> dict:
+        """Apply a multi-document WebRobot manifest (the declarative way to create
+        Project / Pipeline / Job / Dataset). `yaml` is the full multi-doc YAML
+        string (docs separated by `---`). Dependency-ordered tiers: Project (tier0)
+        -> Dataset (tier1) -> Pipeline (tier2, metadata.project = category id, spec
+        holds the pipeline stages + output) -> Job (tier3, spec.agent: ref:<name>,
+        spec.input.dataset: <id|ref>). Cross-doc refs via `ref:<name>`.
+        Returns {applied:[{kind,name,status,id...}], errors:[]}. Use manifestValidate
+        first for a dry-run. POSTs {yaml} to /webrobot/api/manifest/apply."""
+        return await _post("/webrobot/api/manifest/apply", {"yaml": yaml})
+
+    @mcp.tool(name="manifestValidate")
+    async def manifest_validate(yaml: str) -> dict:
+        """Dry-run a manifest YAML (no DB writes): parses + reports what would change.
+        NB cross-doc refs to not-yet-created entities (e.g. a Pipeline referencing a
+        Project defined in the same manifest) report 'not found' in validate — that's
+        expected; they resolve at apply time via tier ordering. POSTs to
+        /webrobot/api/manifest/validate."""
+        return await _post("/webrobot/api/manifest/validate", {"yaml": yaml})
 
 
 def _register_demo_tools(mcp: FastMCP, client) -> None:
