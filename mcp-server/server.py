@@ -236,6 +236,11 @@ _FULL_OPAQUE_EXCLUDE = [
     # spec isn't enough (the wrapper remains) — replaced by typed tools below.
     r"^/webrobot/api/manifest/apply$",
     r"^/webrobot/api/manifest/validate$",
+    # Job execute reads a raw Map<String,Object> -> opaque OpenAPI body, so FastMCP
+    # serializes it per the (empty) schema and DROPS unknown fields like `engine`
+    # (the engine selector never reaches Jersey -> always Spark). Replaced by a typed
+    # executeJob_1 tool below that explicitly carries `engine`.
+    r"^/webrobot/api/projects/id/[^/]+/jobs/[^/]+/execute$",
 ]
 
 
@@ -306,6 +311,21 @@ def _register_full_tools(mcp: FastMCP, client) -> None:
         Returns {applied:[{kind,name,status,id...}], errors:[]}. Use manifestValidate
         first for a dry-run. POSTs {yaml} to /webrobot/api/manifest/apply."""
         return await _post("/webrobot/api/manifest/apply", {"yaml": yaml})
+
+    @mcp.tool(name="executeJob_1")
+    async def execute_job(projectId: str, jobId: str, engine: str | None = None,
+                          options: dict | None = None) -> dict:
+        """Execute a job in a project (POST /webrobot/api/projects/id/{projectId}/jobs/{jobId}/execute).
+        `engine`: set to "scrapy" to run the pipeline on the lightweight Scrapy ingestion
+        engine (Ray job) instead of the default distributed Spark engine — only valid for
+        ingestion-only pipelines (fetch/explore/join/flatSelect/extract); pipelines using
+        analytics/LLM stages are rejected and must use Spark. Omit `engine` for the default.
+        `options`: extra execution-request fields merged into the body (e.g. iextractVisionValidate,
+        hitlAwait). Returns the submission result (executionId + status)."""
+        body: dict = dict(options or {})
+        if engine:
+            body["engine"] = engine
+        return await _post(f"/webrobot/api/projects/id/{projectId}/jobs/{jobId}/execute", body)
 
     @mcp.tool(name="manifestValidate")
     async def manifest_validate(yaml: str) -> dict:
