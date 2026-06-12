@@ -401,14 +401,22 @@ def _register_demo_tools(mcp: FastMCP, client) -> None:
 
     @mcp.tool(name="executeDemo")
     async def execute_demo(pipeline_name: str, limit: int = 10, dataset_id: int | None = None,
-                           execution_mode: str = "shared", hetzner_api_key: str | None = None) -> dict:
+                           execution_mode: str = "shared", hetzner_api_key: str | None = None,
+                           engine: str | None = None) -> dict:
         """Run a saved demo pipeline. limit clamped 5–10. execution_mode 'shared'
         (default) or 'byoc' (needs hetzner_api_key → runs on the user's Hetzner VMs).
+        `engine`: set to "scrapy" to run a SMALL ingestion-only pipeline (fetch/wget/visit/
+        explore/join/flatSelect/extract — NO analytics/LLM/intelligent stages) on the
+        lightweight Scrapy engine (Ray, no code-gen) instead of the default distributed
+        Spark engine; rejected (with the unsupported stages) if the pipeline needs analytics.
+        Omit `engine` for the default Spark engine.
         Returns an execution map with execution_id (poll the output/status tools)."""
         params: dict = {"limit": limit}
         if dataset_id is not None:
             params["datasetId"] = dataset_id
         body: dict = {"parameters": params, "executionMode": execution_mode}
+        if engine:
+            body["engine"] = engine
         if execution_mode.lower() == "byoc" and hetzner_api_key:
             body["cloudCredentials"] = {"hetznerApiKey": hetzner_api_key}
         return await _post(f"/webrobot/api/demo/execute/{quote(pipeline_name)}", body)
