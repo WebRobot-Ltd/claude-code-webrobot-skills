@@ -314,17 +314,48 @@ def _register_full_tools(mcp: FastMCP, client) -> None:
 
     @mcp.tool(name="executeJob_1")
     async def execute_job(projectId: str, jobId: str, engine: str | None = None,
+                          camoufoxMode: str | None = None,
+                          elasticBrowserVmCount: int | None = None,
+                          elasticBrowserCloudCredentialId: int | None = None,
+                          useEphemeralElasticBrowserVms: bool | None = None,
+                          elasticBrowserVmLifecycle: str | None = None,
                           options: dict | None = None) -> dict:
         """Execute a job in a project (POST /webrobot/api/projects/id/{projectId}/jobs/{jobId}/execute).
-        `engine`: set to "scrapy" to run the pipeline on the lightweight Scrapy ingestion
-        engine (Ray job) instead of the default distributed Spark engine — only valid for
-        ingestion-only pipelines (fetch/explore/join/flatSelect/extract); pipelines using
-        analytics/LLM stages are rejected and must use Spark. Omit `engine` for the default.
-        `options`: extra execution-request fields merged into the body (e.g. iextractVisionValidate,
-        hitlAwait). Returns the submission result (executionId + status)."""
+
+        `engine`: "scrapy" runs the pipeline on the lightweight Scrapy ingestion engine (Ray job)
+        instead of the default distributed Spark engine — only for ingestion-only pipelines
+        (fetch/visit/explore/join/flatSelect/extract); analytics/LLM stages are rejected and must
+        use Spark. Omit for the default Spark engine.
+
+        BYOC elastic browser VMs (Camoufox on the tenant's own cloud — works for BOTH scrapy and
+        Spark; the user picks in-cluster vs BYOC per run):
+        - `camoufoxMode`: "IN_CLUSTER" (shared Camoufox pool, no VM) or "EXTERNAL_VM" (provision a
+          per-tenant Camoufox VM via Ansible). Omit → in-cluster shared.
+        - `elasticBrowserVmCount`: number of browser VMs to scale the tenant fleet to for THIS run
+          (always tied to the run; clamped to the plan's max).
+        - `elasticBrowserCloudCredentialId`: cloud_credential id holding the tenant's Hetzner token.
+        - `useEphemeralElasticBrowserVms`: true to enable the Ansible/Camoufox VM path (required for
+          super_admin submits to provision instead of using the shared cluster).
+        - `elasticBrowserVmLifecycle`: VM teardown strategy. DEFAULT "TEARDOWN_ALWAYS" (VM torn down
+          when the run reaches a terminal state — COMPLETED or FAILED). Override with "KEEP" (keep
+          the fleet up; tear down explicitly later) or "TEARDOWN_ON_JOB_SUCCESS" (keep on failure
+          for debugging).
+
+        `options`: any extra execution-request fields merged into the body (e.g. iextractVisionValidate,
+        hitlAwait). Returns the submission result (executionId + status; "PROVISIONING" for async BYOC)."""
         body: dict = dict(options or {})
         if engine:
             body["engine"] = engine
+        if camoufoxMode is not None:
+            body["camoufoxMode"] = camoufoxMode
+        if elasticBrowserVmCount is not None:
+            body["elasticBrowserVmCount"] = elasticBrowserVmCount
+        if elasticBrowserCloudCredentialId is not None:
+            body["elasticBrowserCloudCredentialId"] = elasticBrowserCloudCredentialId
+        if useEphemeralElasticBrowserVms is not None:
+            body["useEphemeralElasticBrowserVms"] = useEphemeralElasticBrowserVms
+        if elasticBrowserVmLifecycle is not None:
+            body["elasticBrowserVmLifecycle"] = elasticBrowserVmLifecycle
         return await _post(f"/webrobot/api/projects/id/{projectId}/jobs/{jobId}/execute", body)
 
     @mcp.tool(name="manifestValidate")
