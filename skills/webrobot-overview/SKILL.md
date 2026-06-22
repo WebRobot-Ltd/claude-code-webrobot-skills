@@ -36,7 +36,8 @@ Modern data teams stitch 3-5 tools together to acquire and process web data. Age
 | Layer | What it is |
 |-------|------------|
 | **Web Acquisition** | Browser pool: Playwright, Steel, Camoufox. Anti-bot resilience, structured extraction. |
-| **Distributed Processing** | Apache Spark on Kubernetes (Spark Operator + SparkApplication CRD). Petabyte-scale, multi-tenant. |
+| **Distributed Processing** | Apache Spark on Kubernetes (Spark Operator + SparkApplication CRD). Petabyte-scale, multi-tenant. The heavy tier. |
+| **Lightweight engines (entry tier)** | Run as Ray jobs, no Spark cluster: **Scrapy** (scraping/ingestion) · **Analytics** (in-process DuckDB + Polars — `sql_query`, transforms, `python_extensions` on small/in-RAM data) · **Hybrid** (scrape + analyze in ONE job). Same pipeline YAML; cheaper for small/medium workloads. |
 | **AI-Native Stages** | LLM-powered extraction / classification / generation as first-class pipeline stages — OpenAI, Anthropic, Groq. |
 | **Plugin SDKs** | Scala (ETL) + Java/Jersey (REST) + Python runtime extensions. JARs in MinIO, schemas via Flyway. |
 | **Governance & Billing** | Multi-tenant by default (`org_id`, JWT). Stripe-gated VM provisioning. Audit trail end-to-end. |

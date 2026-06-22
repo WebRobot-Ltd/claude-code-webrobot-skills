@@ -10,6 +10,19 @@ allowed-tools: mcp__webrobot__list_stages mcp__webrobot__describe_stage mcp__web
 
 You build, validate, and deploy WebRobot ETL pipeline manifests for the engine's `PipelineParser`. Your authority on what stages exist and what they accept is the **public stage catalog**, never your training data — partner plugins ship and version their stages independently.
 
+## Execution engines — pick by KIND and SCALE (pass as `engine` on run)
+
+The **same** pipeline YAML runs on different engines; only the stage set + runtime differ.
+
+| Engine | When | Runtime |
+|--------|------|---------|
+| `scrapy` | pure scraping/ingestion (fetch, visit, explore, join, flatSelect, extract) | lightweight Ray job, remote Camoufox browser, no Spark |
+| `analytics` | pure relational / transform / custom-Python analysis on **small / in-RAM** data (load_*, `sql_query`, dedup, filter, select, `python_row_transform`/`python_dataframe_transform`, save_*) | in-process **DuckDB + Polars**, no Spark cluster |
+| `hybrid` | **scrape → analyze in ONE job** (scraping stages then analytics stages) | scrapy segment feeds its rows straight into the analytics segment |
+| `spark` (default) | big-data SCALE (out-of-RAM, real shuffle, many sources) **and** the stages not yet on the lightweight tier: `sentiment`, clustering, `surebet`, `rag_*`, `intelligent*`/`iextract`, full connector + ML set | distributed Spark on K8s |
+
+Selection rule: scraping-only → `scrapy`; relational/Python analysis on small data → `analytics`; mixed scrape+analyze on small data → `hybrid`; big-data / ML / LLM-heavy / many-source → `spark`. `sql_query` and `python_extensions` **no longer require Spark** for entry-tier volumes — they run on `analytics`/`hybrid` too (DuckDB SQL; the Spark vs DuckDB SQL dialects are both ANSI and largely interchangeable). SCALE BOUND: analytics/hybrid are single-node/in-RAM — escalate to `spark` when the data won't fit a worker's memory.
+
 ## Source of truth — the public stage catalog
 
 The catalog endpoint is **public (no authentication required, read-only)** — when MCP tools aren't available or you want to double-check the live state, curl it directly:
@@ -252,7 +265,7 @@ pipeline:
 
 ## iextract — code-mode LLM extraction
 
-Used inside any pipeline that has visited a page to pull structured fields. Always provide a field prefix to namespace results.
+Used inside any pipeline that has visited a page to pull structured fields. **Always provide a field prefix (position 2) AND `as <col>` aliases in the prompt.** Without them the extracted columns can be named after the *whole prompt* (e.g. `Extract the article…body`) instead of a clean `body`, and any downstream stage that references the column (`sentiment`, `sql_query`, `avgSentimentByKey`, …) dies at plan time with `UNRESOLVED_COLUMN` — *after* the expensive crawl/LLM work has already run. Output columns are `<prefix><snake_case_key>`; reference them downstream by that exact name (e.g. prefix `art_` + `as body` → column `art_body` → `sentiment: [art_body]`).
 
 ```yaml
 - stage: iextract
@@ -304,6 +317,23 @@ Hard-won lessons (all verified end-to-end):
 - Demo output-preview caps display at **≤100** rows (pass `limit=100`; >100 silently resets to 10).
   Demo total records: `WEBROBOT_DEMO_MAX_RECORDS` env (default 10). Other verticals (sure-bet,
   real-estate arbitrage, sentiment) reuse the same `sources:` substrate with a different combine step.
+
+**`sources:` is a MAP keyed by source name, NOT a list** (`sources: { npr: {pipeline:[…]}, cnn: {pipeline:[…]} }`). A YAML *list* (`sources: [ {source: npr, …} ]`) is rejected by the runtime parser (`MismatchedInputException … ["sources"]`). The union tags every row with a literal **`source`** column (the map key) — analytics verticals combine on it instead of `match:`. Sentiment example (crawl → article extract → per-source sentiment):
+
+```yaml
+sources:
+  npr: { pipeline: [ {stage: wget, args: ["https://text.npr.org/"]},
+                     {stage: intelligentWgetExplore, args: ["links to news articles", 1, 3]},
+                     {stage: iextract, args: ["body", "article headline as title and full text as body", "art_"]} ] }
+  cnn: { pipeline: [ {stage: wget, args: ["https://lite.cnn.com/"]},
+                     {stage: intelligentWgetExplore, args: ["links to news articles", 1, 3]},
+                     {stage: iextract, args: ["body", "article headline as title and full text as body", "art_"]} ] }
+pipeline:                                   # COMMON tail on the union
+  - { stage: sentiment, args: ["art_body"] }            # → sentiment_score, sentiment_label
+  - { stage: avgSentimentByKey, args: ["source", "sentiment_score"] }   # avg per source
+output: { format: parquet, mode: overwrite }
+```
+Pick low-anti-bot sources for demos (text-only/lite news, MediaWiki) and cap `intelligentWgetExplore` depth ≤ 1 (shared demo LLM budget).
 
 ## LLM-driven e-commerce flow — fetch+auto_internal_search → intelligentExplore → intelligentJoin → iextract
 
@@ -410,6 +440,9 @@ output:
 - Same applies to `IntelligentAction`: there is no `intelligentAction` stage — `action: intelligent, query: "…"` goes inside a fetch trace; or use `intelligent_join` (which accepts an `actionPrompt` as 2nd arg) when you want "act then follow N links" in one step.
 - Running `intelligentExplore` / `intelligentJoin` before the SERP-producing fetch → wrong selectors inferred (the row preference heuristic doesn't see a navigated page).
 - `iextract` prompt without `as <col>` aliases → no column names to bind; rephrase as `field desc as col_name, …`.
+- **Article body extraction: prefer `extract` + `method: boilerPipe` over `iextract`.** `boilerPipe` (core `de.l3s.boilerpipe.ArticleExtractor`, exposed as a dynamic-dispatch method, camelCase EXACT) pulls the main article text DETERMINISTICALLY — no LLM, no token cost, instant (vs `iextract` which burns the shared LLM budget per page). Use it for news/article → sentiment/RAG pipelines: `- {stage: extract, args: [{selector: body, method: boilerPipe, as: body}]}`.
+- **`extract` extractor args are FLAT, not nested.** Each `{selector, method, as}` map is a DIRECT element of `args` — `args: [{selector: …, method: …, as: …}, …]`. Wrapping them in an extra list (`args: [[ {…} ]]`) → `WARN NativeStages: [extract] Unrecognised extractor arg: List(Map(…)) – ignored` → the column is SILENTLY dropped (and any downstream stage referencing it sees empty/neutral).
+- **Multi-source (`sources:`) + downstream `transformRow` LLM stages (e.g. `sentiment`) is BROKEN.** After the `sources:` desugaring (per-source `sql_query` source-tag + `union`), `transformRow` stages can't read columns via `row.get(Field(name))` → they get EMPTY text → silent default (sentiment → 0.0/NEUTRAL, entities ""). The column IS in the DataFrame (shows in output) but the spooky row accessor misses it post-union. Single-source works fine. WORKAROUND until fixed: run `sentiment`/analytic transformRow stages **inside each source's `pipeline:`** (before the tag+union), then union; or apply sentiment in a single-source pipeline.
 
 There's also a **split form** for these stages — `inferNavigationSelector` / `inferJoinSelector` / `inferSelector` produce `_nav_selector` / `_join_selector` / `_inferred_selector` literal fields that downstream native stages consume with `$_nav_selector` references. Use the split form when you want the inferred selector to be observable in the row schema or to be reused by multiple downstream stages. The combined `intelligentExplore`/`intelligentJoin` form is simpler when each inference feeds exactly one consumer.
 

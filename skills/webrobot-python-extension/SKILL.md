@@ -8,7 +8,7 @@ allowed-tools: mcp__webrobot__list_stages mcp__webrobot__describe_stage mcp__web
 
 # WebRobot Python Extensions
 
-Python Extensions are the lightweight extensibility path for WebroBot pipelines. Instead of building a compiled Scala plugin, you write a Python function that the ETL engine wraps as a Spark UDF at runtime. The engine generates PySpark boilerplate around your function automatically.
+Python Extensions are the lightweight extensibility path for WebroBot pipelines. Instead of building a compiled Scala plugin, you write a Python function (`python_row_transform` / `python_dataframe_transform`) that the engine runs at runtime. RUNTIME depends on the execution engine: on **Spark** it is wrapped as a Spark UDF (PySpark boilerplate generated automatically); on the **entry-tier analytics / hybrid engine** it runs **in-process directly over the Polars frame** (no PySpark) — gated by `WEBROBOT_PYTHON_EXTENSIONS_ENABLED` + an AST guard (no imports / dunder / exec / file IO). Same `python_extensions` block + `python_*_transform:<name>` reference either way — so the function authoring is identical; only `dataframe_transform` is engine-coupled (Spark DataFrame API on Spark vs Polars on analytics).
 
 Use Python Extensions when the logic is:
 - Specific to one pipeline or agent
