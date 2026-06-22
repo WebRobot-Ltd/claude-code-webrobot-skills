@@ -47,6 +47,44 @@ Fetching a PDF (or docx/xlsx) URL is transparent: the engine auto-detects the co
 
 Then process `doc_text` downstream (`sentiment` / `sql_query` / `rag_ingest` / `python_*`). Use the **browser (`visitExplore`) ONLY when the index is a JS "page picker"** (dynamic listing/pagination that won't reveal the links without JS) — and even then fetch the PDFs themselves with `wgetJoin`, never `visitJoin`. Metadata: `<head><meta>` via `method: attr:<name>` (for links use `method: href`).
 
+## Bookmakers / odds extraction
+
+- **Odds are lazy-loaded** — a market must be **clicked** to reveal/expand its odds before they exist in the DOM. The fetch/visit interaction **trace MUST include those clicks** (`visit → click the market/accordion → waitForSelector the odds container`) BEFORE extraction. When setting up via the live browser, record each click as a trace action so the odds load at run time.
+- **Align the names** — emit a consistent `event` column (match/event name) and consistent per-outcome odds columns, so `oddsNormalize` / `surebetFinder` / `sql_query` can group by event+outcome. Misaligned event/odds names are the #1 cause of broken arbitrage.
+- **Default scope** — unless the user explicitly asks for more, extract ONLY the most popular market (match winner / 1X2 / moneyline), not every market — shorter, more reliable trace.
+- **Multi-source by default** — surebet/arbitrage compares odds **across** bookmakers, so build a **multi-source** pipeline (the `sources:` map — one source per bookmaker — then union + `surebetFinder`), even when the user names a single site (arbitrage needs ≥2 books). The validator only validates **one source at a time** — that's a validation limitation, NOT a reason to author a single-source pipeline; build the full multi-source pipeline anyway.
+
+### `oddsSelect` — the deterministic odds extractor
+
+`oddsSelect` produces **one row per outcome per market** (all selectors are supplied up front — nothing inferred at runtime). Args (always re-check the catalog for the live schema):
+
+- **`markets`** (required, array): `[{label, sectionSelector, rowSelector, fields:[{selector, method, as}]}]`
+  - `label` → the stage-added **`market_type`** column (the market's name).
+  - `rowSelector` is **relative to** `sectionSelector`; each field's `selector` is **relative to each row**.
+- **`enabled`** (optional, array): subset of market `label`s to extract (omit = all markets) — the lever to honour the "most popular market only" default above.
+
+**Output** = the parent row's columns **+** one column per field `as` (wizard-standard names: `selection`, `odds`, `line`, `over_under`, `spread`, `player_name`) **+** `market_type`. Rows are **dropped unless `selection` and `odds` are non-empty**.
+
+**Authoring (wizard):** record the lazy-load actions (scroll / expand tabs / clicks) in the fetch trace, pick one content box per market, let the AI infer the odds structure (which selector is selection vs odds vs line), confirm, and tick the subset of markets. Runtime (Spark vs Ray) = `metadata.runtime`. Downstream: `oddsNormalize` → `surebetFinder` (group by event + outcome).
+
+```yaml
+- stage: fetch
+  args:
+  - https://<bookmaker>/event/...
+  - - {action: click, selector: '.market-accordion'}        # expand → lazy-load the odds
+    - {action: waitForSelector, selector: '.market .outcome'}
+- stage: oddsSelect
+  args:
+  - markets:
+    - label: "Match Winner"
+      sectionSelector: ".market[data-market='1x2']"
+      rowSelector: ".outcome"
+      fields:
+      - {selector: ".name", method: text, as: selection}
+      - {selector: ".price", method: text, as: odds}
+    enabled: ["Match Winner"]                                 # most-popular only (default)
+```
+
 ## Source of truth — the public stage catalog
 
 The catalog endpoint is **public (no authentication required, read-only)** — when MCP tools aren't available or you want to double-check the live state, curl it directly:
