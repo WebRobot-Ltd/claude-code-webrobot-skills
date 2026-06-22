@@ -23,6 +23,30 @@ The **same** pipeline YAML runs on different engines; only the stage set + runti
 
 Selection rule: scraping-only → `scrapy`; relational/Python analysis on small data → `analytics`; mixed scrape+analyze on small data → `hybrid`; big-data / ML / LLM-heavy / many-source → `spark`. `sql_query` and `python_extensions` **no longer require Spark** for entry-tier volumes — they run on `analytics`/`hybrid` too (DuckDB SQL; the Spark vs DuckDB SQL dialects are both ANSI and largely interchangeable). SCALE BOUND: analytics/hybrid are single-node/in-RAM — escalate to `spark` when the data won't fit a worker's memory.
 
+## Documents / PDF extraction — use `wget`, not the browser
+
+Fetching a PDF (or docx/xlsx) URL is transparent: the engine auto-detects the content-type and **Tika-parses it into XHTML**, so the fetched Doc is a normal DOM — pull its text with the SAME `extract` stage, **no special PDF stage**.
+
+**Always use `wget` / `wgetExplore` / `wgetJoin` (HTTP), NOT `visit*` (browser).** `wget` fetches the raw bytes → Tika → text. The browser renders the **pdf.js viewer** instead, so you'd capture the viewer chrome, not the document text. wget is also cheaper (no Camoufox) and works on the entry-tier `scrapy`/`hybrid` engines.
+
+```yaml
+# single PDF
+- stage: wget
+  args: ['<pdf-url>']
+- stage: extract
+  args: [ [ {selector: "body", method: text, as: doc_text} ] ]   # whole document text, one row
+
+# an archive of PDFs (index page → many .pdf links) — all HTTP, no browser
+- stage: wgetExplore         # discover the .pdf anchors (check catalog for exact args)
+  args: ['<index-url>', 'a[href$=".pdf"]', 1]
+- stage: wgetJoin            # follow each .pdf link via HTTP → Tika → text
+  args: ['a[href$=".pdf"]']
+- stage: extract
+  args: [ [ {selector: "body", method: text, as: doc_text} ] ]
+```
+
+Then process `doc_text` downstream (`sentiment` / `sql_query` / `rag_ingest` / `python_*`). Use the **browser (`visitExplore`) ONLY when the index is a JS "page picker"** (dynamic listing/pagination that won't reveal the links without JS) — and even then fetch the PDFs themselves with `wgetJoin`, never `visitJoin`. Metadata: `<head><meta>` via `method: attr:<name>` (for links use `method: href`).
+
 ## Source of truth — the public stage catalog
 
 The catalog endpoint is **public (no authentication required, read-only)** — when MCP tools aren't available or you want to double-check the live state, curl it directly:
