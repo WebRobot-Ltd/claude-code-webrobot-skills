@@ -257,6 +257,13 @@ def _route_maps_for_scope(scope: str) -> list[RouteMap]:
     # MCP clients today drive Tools well and Resources less so), minus the
     # opaque/multipart endpoints replaced by typed tools below.
     maps = [RouteMap(pattern=p, mcp_type=MCPType.EXCLUDE) for p in _FULL_OPAQUE_EXCLUDE]
+    # Architectural boundary: the PUBLIC demo studio (/webrobot/api/demo/*, demo-org,
+    # capped, no-auth) must NOT leak into the AUTHENTICATED full MCP. Authenticated
+    # agents use the org-scoped /tenant/* mirror (TenantStudioApiV10) — same studio
+    # surface (generate/save/execute/wizard/rag/dataset/...), typed bodies, JWT org
+    # scoping + plan limits. Exclude the whole demo surface so the agent sees only the
+    # tenant + real APIs (kills the duplicate generatePipeline vs generatePipeline_1, etc.).
+    maps += [RouteMap(pattern=r"^/webrobot/api/demo/.*", mcp_type=MCPType.EXCLUDE)]
     maps += [RouteMap(pattern=r".*", mcp_type=MCPType.TOOL)]
     return maps
 
