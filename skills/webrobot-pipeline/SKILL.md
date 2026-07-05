@@ -198,6 +198,40 @@ Common sinks (always at the end):
 
 Use `list_stages?plugin_type=etl` filtering when you need to discover sinks vs sources. The `plugin_type` field in the catalog distinguishes them.
 
+## Pagination — pick the stage by how "next" is reachable (IMPORTANT)
+
+Two fundamentally different mechanisms; the wrong one silently returns only page 1.
+
+**A. URL-based** — `?page=N`, `?index=N`, `&start=N`, or a real `<a href>` "next". Pages are
+independently fetchable → `wgetExplore` / `visitExplore` (they hardcode the trace to `Visit('A.href)`
+= follow the link's **absolute href**), or seed the page URLs and fetch in **parallel** (best on Spark).
+
+**B. Click-based** — a `<button>` "Next", "Load more", or JS instant-search with **no followable href**.
+The next page exists only after a **click** on a live page → use **`visitPaginate`** (example-plugin ≥ 654):
+```yaml
+- stage: visitPaginate
+  args:
+    - "https://site.com/search?q=x&index=0"   # seed url (literal or $col)
+    - "button[aria-label='Next']"             # the single "next" control
+    - 10                                       # optional page limit (default stops at last page)
+- stage: flatSelect
+  args: ["[class*='card']", [ {selector, method, as}, … ]]
+```
+`visitPaginate` auto-builds `Visit(url) +> Paginate(next)` = `Visit +> Loop(Snapshot +> Click)`: one
+`Visit` opens the page, the `Loop` snapshots + clicks "next" **in the same browser session/task**, one
+Doc per page, stopping when the click throws (no more "next"). Sequential within a seed (a click chain),
+parallel across seeds; works on distributed Spark because the whole pagination is one self-contained trace
+on one task.
+
+**Do NOT** try click pagination with `explore`/`visitExplore` giving it a bare `[click]`: explore builds
+each hop's trace ALONE (no parent backtrace), so the click runs on an **unloaded** page → 60 s
+`TimeoutError`. `usePersistentSession` does not help (a live Playwright page can't span Spark tasks). To
+paginate *inside* an explore (follow links, then paginate each), `visitExplore` now takes an `actions:`
+list and AUTO-PREPENDS `Visit('A.href)`: `args: ["div.category a", 1, {actions: [{action: paginate,
+selector: "a[rel=next]"}]}]` → per link `Visit('A.href) +> Paginate(next)`. The `paginate`
+(`Loop(Snapshot+Click)`) and `loadmore` (`Loop(Click)`) **action factories** also work in any
+`fetch`/`visitJoin` actions trace. Mirrors the official spookystuff `ExploreClickNextPageIT`.
+
 ## Workflow for building a pipeline
 
 1. If the user gives a natural-language description, call `suggest_pipeline_stages`.
