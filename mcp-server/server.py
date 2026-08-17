@@ -28,6 +28,7 @@ import sys
 from pathlib import Path
 
 import httpx
+from httpx._content import ByteStream
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.server.openapi import MCPType, RouteMap
@@ -163,6 +164,11 @@ async def _unwrap_opaque_body(request: httpx.Request) -> None:
     if not isinstance(inner, (dict, list)):
         return
     new_body = json.dumps(inner).encode()
+    # Servono TUTTI E TRE. Aggiornare solo `_content` e l'intestazione lascia httpx a spedire lo
+    # stream originale mentre dichiara la lunghezza nuova: il risultato e' un
+    # "Too much data for declared Content-Length" al posto della richiesta. Lo stream e' cio' che
+    # viene davvero inviato.
+    request.stream = ByteStream(new_body)
     request._content = new_body
     request.headers["Content-Length"] = str(len(new_body))
 
