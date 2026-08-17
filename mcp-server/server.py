@@ -124,6 +124,49 @@ async def _forward_client_auth(request: httpx.Request) -> None:
         request.headers["X-API-Key"] = api_key
 
 
+async def _unwrap_opaque_body(request: httpx.Request) -> None:
+    """Per-request hook: togli l'involucro `{"body": {...}}` dal corpo JSON.
+
+    Gli endpoint Jersey che leggono un `Map<String,Object>` grezzo hanno un
+    requestBody OpenAPI senza proprieta' nominate. FastMCP lo modella come UN
+    parametro libero chiamato `body` e poi, al momento di costruire la richiesta,
+    lo serializza come una PROPRIETA' del corpo invece di usarne il valore COME
+    corpo. L'API riceve quindi `{"body": {...}}` e non vede nessuno dei campi.
+
+    Verificato sul campo contro `PUT /auth/organizations/{id}`:
+        {"node_pool": "screebits"}            -> 200
+        {"body": {"node_pool": "screebits"}}  -> 400 "No fields to update"
+
+    Finora si aggirava endpoint per endpoint (escludi la rotta, registra un tool
+    tipizzato). Funziona, ma copre solo quelli a cui qualcuno ha pensato: ogni
+    nuovo endpoint con corpo non tipizzato nasce rotto, e il sintomo — campi che
+    spariscono senza errore — non indica mai la causa.
+
+    L'involucro si toglie solo quando l'oggetto ha ESATTAMENTE una chiave `body`
+    con dentro un oggetto: cosi' un corpo che avesse legittimamente un campo
+    chiamato `body` accanto ad altri resta intatto.
+    """
+    if request.method not in ("POST", "PUT", "PATCH"):
+        return
+    if "json" not in (request.headers.get("Content-Type") or ""):
+        return
+    try:
+        raw = request.content
+        if not raw:
+            return
+        payload = json.loads(raw)
+    except Exception:
+        return
+    if not (isinstance(payload, dict) and list(payload.keys()) == ["body"]):
+        return
+    inner = payload["body"]
+    if not isinstance(inner, (dict, list)):
+        return
+    new_body = json.dumps(inner).encode()
+    request._content = new_body
+    request.headers["Content-Length"] = str(len(new_body))
+
+
 def _build_httpx_client(base_url: str, scope: str) -> httpx.AsyncClient:
     headers: dict[str, str] = {
         "Accept": "application/json",
@@ -132,7 +175,12 @@ def _build_httpx_client(base_url: str, scope: str) -> httpx.AsyncClient:
     # full scope = PROXY: forward the caller's own credential per-request (no
     # baked-in key, so safe to expose publicly). demo scope = public endpoints,
     # no auth at all.
-    event_hooks = {"request": [_forward_client_auth]} if scope == "full" else {}
+    # L'unwrap vale per entrambi gli scope: il difetto sta nel modo in cui FastMCP
+    # costruisce il corpo, non nell'autenticazione.
+    hooks = [_unwrap_opaque_body]
+    if scope == "full":
+        hooks.insert(0, _forward_client_auth)
+    event_hooks = {"request": hooks}
     return httpx.AsyncClient(
         base_url=f"{base_url}/api",
         headers=headers,
