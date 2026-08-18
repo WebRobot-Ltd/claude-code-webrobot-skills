@@ -464,6 +464,39 @@ def _register_billing_plan_tools(mcp: FastMCP, client) -> None:
     Solo i campi effettivamente passati finiscono nel corpo: un campo omesso resta invariato, che e'
     la semantica dell'endpoint — mandarli tutti azzererebbe quelli non specificati.
     """
+    # I valori arrivano spesso come STRINGA anche quando il parametro e' dichiarato bool/dict/float:
+    # dipende da come il client serializza gli argomenti. Se il tipo dichiarato e' stretto, la
+    # validazione scarta il valore SENZA errore e il campo sparisce — che e' esattamente il difetto
+    # da cui nasce questo file. Meglio accettare entrambe le forme e normalizzare qui.
+    def _bool(v):
+        if v is None or isinstance(v, bool):
+            return v
+        t = str(v).strip().lower()
+        return True if t in ("true", "1", "yes") else False if t in ("false", "0", "no") else None
+
+    def _num(v):
+        if v is None or isinstance(v, (int, float)):
+            return v
+        try:
+            return float(str(v).strip())
+        except ValueError:
+            return None
+
+    def _obj(v):
+        if v is None or isinstance(v, (dict, list)):
+            return v
+        try:
+            parsed = json.loads(str(v))
+            return parsed if isinstance(parsed, (dict, list)) else None
+        except Exception:
+            return None
+
+    def _lista(v):
+        if v is None or isinstance(v, list):
+            return v
+        parsed = _obj(v)
+        return parsed if isinstance(parsed, list) else None
+
     def _corpo(**campi) -> dict:
         return {k: v for k, v in campi.items() if v is not None}
 
@@ -476,13 +509,13 @@ def _register_billing_plan_tools(mcp: FastMCP, client) -> None:
             return {"raw": r.text[:1000]}
 
     @mcp.tool(name="createBillingPlan")
-    async def create_billing_plan(name: str, amount: float,
+    async def create_billing_plan(name: str, amount: float | str,
                                   currency: str = "eur", interval: str = "month",
-                                  organizationId: int | None = None,
-                                  setup_amount: float | None = None,
+                                  organizationId: int | str | None = None,
+                                  setup_amount: float | str | None = None,
                                   description: str | None = None,
-                                  features: list[str] | None = None,
-                                  etl_entitlements: dict | None = None) -> dict:
+                                  features: list[str] | str | None = None,
+                                  etl_entitlements: dict | str | None = None) -> dict:
         """Crea un piano di fatturazione. Con `organizationId` e' un piano SU MISURA per quella
         organizzazione, senza e' un piano standard del catalogo.
 
@@ -495,35 +528,35 @@ def _register_billing_plan_tools(mcp: FastMCP, client) -> None:
         Creare il piano NON lo pubblica su Stripe: serve poi createCustomPlan con l'id restituito,
         altrimenti resta senza prezzo e il tenant non lo vede fra quelli acquistabili.
         """
-        payload = _corpo(name=name, amount=amount, currency=currency, interval=interval,
-                         organizationId=organizationId, setup_amount=setup_amount,
-                         description=description, features=features,
-                         etl_entitlements=etl_entitlements)
+        payload = _corpo(name=name, amount=_num(amount), currency=currency, interval=interval,
+                         organizationId=_num(organizationId) and int(_num(organizationId)),
+                         setup_amount=_num(setup_amount), description=description,
+                         features=_lista(features), etl_entitlements=_obj(etl_entitlements))
         return await _esito(await client.post("/webrobot/api/billing/plans", json=payload))
 
     @mcp.tool(name="updateBillingPlan")
-    async def update_billing_plan(id: int,
+    async def update_billing_plan(id: int | str,
                                   name: str | None = None,
                                   description: str | None = None,
-                                  amount: float | None = None,
-                                  setup_amount: float | None = None,
+                                  amount: float | str | None = None,
+                                  setup_amount: float | str | None = None,
                                   currency: str | None = None,
                                   interval: str | None = None,
-                                  is_active: bool | None = None,
-                                  features: list[str] | None = None,
-                                  etl_entitlements: dict | None = None) -> dict:
+                                  is_active: bool | str | None = None,
+                                  features: list[str] | str | None = None,
+                                  etl_entitlements: dict | str | None = None) -> dict:
         """Aggiorna un piano di fatturazione. Solo super_admin.
 
         Si inviano SOLTANTO i campi passati: quelli omessi restano invariati. `is_active` a false
         toglie il piano dal listino senza cancellarlo.
         """
-        payload = _corpo(name=name, description=description, amount=amount,
-                         setup_amount=setup_amount, currency=currency, interval=interval,
-                         is_active=is_active, features=features,
-                         etl_entitlements=etl_entitlements)
+        payload = _corpo(name=name, description=description, amount=_num(amount),
+                         setup_amount=_num(setup_amount), currency=currency, interval=interval,
+                         is_active=_bool(is_active), features=_lista(features),
+                         etl_entitlements=_obj(etl_entitlements))
         if not payload:
             return {"error": "nessun campo da aggiornare"}
-        return await _esito(await client.put(f"/webrobot/api/billing/plans/{id}", json=payload))
+        return await _esito(await client.put(f"/webrobot/api/billing/plans/{int(_num(id))}", json=payload))
 
 
 def _register_demo_tools(mcp: FastMCP, client) -> None:
