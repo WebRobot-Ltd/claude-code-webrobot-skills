@@ -500,9 +500,12 @@ def _register_billing_plan_tools(mcp: FastMCP, client) -> None:
     def _corpo(**campi) -> dict:
         return {k: v for k, v in campi.items() if v is not None}
 
-    async def _esito(r):
+    async def _esito(r, inviato=None):
         if r.status_code >= 400:
-            return {"error": f"HTTP {r.status_code}", "detail": r.text[:600]}
+            # Il corpo effettivamente spedito torna nell'errore. Senza, un campo che sparisce fra il
+            # chiamante e qui e' indistinguibile da un campo rifiutato dal server, e si finisce a
+            # correggere il lato sbagliato — e' gia' successo tre volte su questo endpoint.
+            return {"error": f"HTTP {r.status_code}", "detail": r.text[:600], "inviato": inviato}
         try:
             return r.json()
         except Exception:
@@ -532,7 +535,7 @@ def _register_billing_plan_tools(mcp: FastMCP, client) -> None:
                          organizationId=_num(organizationId) and int(_num(organizationId)),
                          setup_amount=_num(setup_amount), description=description,
                          features=_lista(features), etl_entitlements=_obj(etl_entitlements))
-        return await _esito(await client.post("/webrobot/api/billing/plans", json=payload))
+        return await _esito(await client.post("/webrobot/api/billing/plans", json=payload), payload)
 
     @mcp.tool(name="updateBillingPlan")
     async def update_billing_plan(id: int | str,
@@ -555,8 +558,13 @@ def _register_billing_plan_tools(mcp: FastMCP, client) -> None:
                          is_active=_bool(is_active), features=_lista(features),
                          etl_entitlements=_obj(etl_entitlements))
         if not payload:
-            return {"error": "nessun campo da aggiornare"}
-        return await _esito(await client.put(f"/webrobot/api/billing/plans/{int(_num(id))}", json=payload))
+            return {"error": "nessun campo da aggiornare",
+                    "ricevuto_dal_chiamante": {k: repr(v) for k, v in {
+                        "name": name, "description": description, "amount": amount,
+                        "setup_amount": setup_amount, "currency": currency, "interval": interval,
+                        "is_active": is_active, "features": features,
+                        "etl_entitlements": etl_entitlements}.items() if v is not None}}
+        return await _esito(await client.put(f"/webrobot/api/billing/plans/{int(_num(id))}", json=payload), payload)
 
 
 def _register_demo_tools(mcp: FastMCP, client) -> None:
