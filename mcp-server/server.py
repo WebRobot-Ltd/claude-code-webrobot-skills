@@ -295,6 +295,27 @@ _FULL_OPAQUE_EXCLUDE = [
     # (the engine selector never reaches Jersey -> always Spark). Replaced by a typed
     # executeJob_1 tool below that explicitly carries `engine`.
     r"^/webrobot/api/projects/id/[^/]+/jobs/[^/]+/execute$",
+    # Piani di fatturazione: creazione e aggiornamento perdevano in SILENZIO i campi non stringa.
+    # Provato uno per uno su PUT /billing/plans/{id} il 18-08-2026: `description` (stringa) veniva
+    # applicato, mentre `is_active` (boolean), `setup_amount` (number) e `etl_entitlements` (object)
+    # non arrivavano affatto — Jersey li riceveva null e rispondeva 400 "No fields to update".
+    #
+    # Sulla POST, che non ha parametro di percorso, numeri e array passavano: si perdeva solo
+    # `etl_entitlements`, il cui schema e' un oggetto OPACO ({"type":"object"} senza properties).
+    # Il sospetto e' quindi che la traduzione dello schema sbagli quando un'operazione ha SIA un
+    # parametro di percorso SIA un corpo tipizzato, ma non e' stato possibile osservarlo sul filo.
+    #
+    # Invece di indovinare il meccanismo, si segue la strada gia' usata sopra per gli altri casi
+    # rotti: si esclude la rotta e si registra uno strumento tipizzato che costruisce il corpo da
+    # se'. Non dipende da come FastMCP traduce lo schema, quindi non puo' ripetere quel difetto.
+]
+
+# Le due rotte dei piani si escludono SOLO in scrittura: le GET (catalogo standard e piani per
+# organizzazione) funzionano benissimo e sono usate di continuo. Escluderle per ogni metodo, come
+# fa l'elenco qui sopra, avrebbe tolto anche quelle.
+_FULL_METHOD_SCOPED_EXCLUDE = [
+    (r"^/webrobot/api/billing/plans$", ["POST"]),
+    (r"^/webrobot/api/billing/plans/[^/]+$", ["PUT"]),
 ]
 
 
@@ -311,6 +332,8 @@ def _route_maps_for_scope(scope: str) -> list[RouteMap]:
     # MCP clients today drive Tools well and Resources less so), minus the
     # opaque/multipart endpoints replaced by typed tools below.
     maps = [RouteMap(pattern=p, mcp_type=MCPType.EXCLUDE) for p in _FULL_OPAQUE_EXCLUDE]
+    maps += [RouteMap(pattern=p, methods=m, mcp_type=MCPType.EXCLUDE)
+             for p, m in _FULL_METHOD_SCOPED_EXCLUDE]
     # Architectural boundary: the PUBLIC demo studio (/webrobot/api/demo/*, demo-org,
     # capped, no-auth) must NOT leak into the AUTHENTICATED full MCP. Authenticated
     # agents use the org-scoped /tenant/* mirror (TenantStudioApiV10) — same studio
@@ -427,6 +450,80 @@ def _register_full_tools(mcp: FastMCP, client) -> None:
         expected; they resolve at apply time via tier ordering. POSTs to
         /webrobot/api/manifest/validate."""
         return await _post("/webrobot/api/manifest/validate", {"yaml": yaml})
+
+
+def _register_billing_plan_tools(mcp: FastMCP, client) -> None:
+    """Creazione e aggiornamento dei piani di fatturazione, con il corpo costruito a mano.
+
+    Gli strumenti generati da `from_openapi` perdevano in SILENZIO i campi non stringa: su
+    PUT /billing/plans/{id} passava solo `description`, mentre `is_active`, `setup_amount` ed
+    `etl_entitlements` non arrivavano affatto e Jersey rispondeva 400 "No fields to update".
+    Nessun errore indicava dove fossero finiti, il che rendeva il guasto quasi illeggibile.
+
+    Qui il dizionario inviato lo costruiamo noi, quindi la traduzione dello schema non c'entra piu'.
+    Solo i campi effettivamente passati finiscono nel corpo: un campo omesso resta invariato, che e'
+    la semantica dell'endpoint — mandarli tutti azzererebbe quelli non specificati.
+    """
+    def _corpo(**campi) -> dict:
+        return {k: v for k, v in campi.items() if v is not None}
+
+    async def _esito(r):
+        if r.status_code >= 400:
+            return {"error": f"HTTP {r.status_code}", "detail": r.text[:600]}
+        try:
+            return r.json()
+        except Exception:
+            return {"raw": r.text[:1000]}
+
+    @mcp.tool(name="createBillingPlan")
+    async def create_billing_plan(name: str, amount: float,
+                                  currency: str = "eur", interval: str = "month",
+                                  organizationId: int | None = None,
+                                  setup_amount: float | None = None,
+                                  description: str | None = None,
+                                  features: list[str] | None = None,
+                                  etl_entitlements: dict | None = None) -> dict:
+        """Crea un piano di fatturazione. Con `organizationId` e' un piano SU MISURA per quella
+        organizzazione, senza e' un piano standard del catalogo.
+
+        `amount` e `setup_amount` sono in EURO, non in centesimi. Per byoc-hard la convenzione e'
+        che `amount` sia il prezzo di UN SERVER al mese, non il totale del cluster.
+
+        `etl_entitlements` e' l'oggetto jsonb delle abilitazioni; per il prezzo per nodo si usa
+        {"pricing": {"model": "per_node", "min_nodes": 3, "unit": "server"}}.
+
+        Creare il piano NON lo pubblica su Stripe: serve poi createCustomPlan con l'id restituito,
+        altrimenti resta senza prezzo e il tenant non lo vede fra quelli acquistabili.
+        """
+        payload = _corpo(name=name, amount=amount, currency=currency, interval=interval,
+                         organizationId=organizationId, setup_amount=setup_amount,
+                         description=description, features=features,
+                         etl_entitlements=etl_entitlements)
+        return await _esito(await client.post("/webrobot/api/billing/plans", json=payload))
+
+    @mcp.tool(name="updateBillingPlan")
+    async def update_billing_plan(id: int,
+                                  name: str | None = None,
+                                  description: str | None = None,
+                                  amount: float | None = None,
+                                  setup_amount: float | None = None,
+                                  currency: str | None = None,
+                                  interval: str | None = None,
+                                  is_active: bool | None = None,
+                                  features: list[str] | None = None,
+                                  etl_entitlements: dict | None = None) -> dict:
+        """Aggiorna un piano di fatturazione. Solo super_admin.
+
+        Si inviano SOLTANTO i campi passati: quelli omessi restano invariati. `is_active` a false
+        toglie il piano dal listino senza cancellarlo.
+        """
+        payload = _corpo(name=name, description=description, amount=amount,
+                         setup_amount=setup_amount, currency=currency, interval=interval,
+                         is_active=is_active, features=features,
+                         etl_entitlements=etl_entitlements)
+        if not payload:
+            return {"error": "nessun campo da aggiornare"}
+        return await _esito(await client.put(f"/webrobot/api/billing/plans/{id}", json=payload))
 
 
 def _register_demo_tools(mcp: FastMCP, client) -> None:
@@ -649,6 +746,7 @@ def build_server() -> FastMCP:
         _register_demo_tools(mcp, client)
     else:
         _register_full_tools(mcp, client)
+        _register_billing_plan_tools(mcp, client)
 
     # Liveness — used by k8s probes when transport=http.
     @mcp.custom_route("/health", methods=["GET"])
