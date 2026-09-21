@@ -19,7 +19,7 @@ Reference implementations (all on JitPack — partners consume with zero auth):
 
 | Repo | Coordinates |
 |------|------------|
-| [webrobot-plugin-sdk](https://github.com/WebRobot-Ltd/webrobot-plugin-sdk) | `com.github.WebRobot-Ltd:webrobot-plugin-sdk:v0.2.1` |
+| [webrobot-plugin-sdk](https://github.com/WebRobot-Ltd/webrobot-plugin-sdk) | `com.github.WebRobot-Ltd:webrobot-plugin-sdk:v0.3.0` |
 | [webrobot-jersey-plugin-sdk](https://github.com/WebRobot-Ltd/webrobot-jersey-plugin-sdk) | `com.github.WebRobot-Ltd:webrobot-jersey-plugin-sdk:v0.2.0` |
 | [webrobot-cli-sdk](https://github.com/WebRobot-Ltd/webrobot-cli-sdk) | `com.github.WebRobot-Ltd:webrobot-cli-sdk:v0.2.0` |
 | [webrobot-example-plugin](https://github.com/WebRobot-Ltd/webrobot-example-plugin) (full ETL example) | source-only reference |
@@ -84,13 +84,13 @@ val scalaFullV = "2.13.12"
 
 dependencies {
     // Public Plugin SDK via JitPack — zero auth required for partners
-    compileOnly("com.github.WebRobot-Ltd:webrobot-plugin-sdk:v0.2.1")
+    compileOnly("com.github.WebRobot-Ltd:webrobot-plugin-sdk:v0.3.0")
     compileOnly("org.scala-lang:scala-library:$scalaFullV")
     compileOnly("org.slf4j:slf4j-api:1.7.36")
 }
 ```
 
-**In-tree builds** (within `webrobot-etl/` repo): replace the compileOnly SDK dep with `compileOnly(project(":webrobot-plugin-sdk"))` — the in-tree module is kept in sync with the public v0.2.1 release, so source code reads identically.
+**In-tree builds** (within `webrobot-etl/` repo): replace the compileOnly SDK dep with `compileOnly(project(":webrobot-plugin-sdk"))` — the in-tree module and the public **v0.3.0** release carry the same 13 traits with identical signatures, so source code reads identically. (They had DRIFTED: the public release sat at 9 traits for months while the in-tree module grew the four dataset-level ones. Check both before assuming parity again.)
 
 ### Stage types
 
