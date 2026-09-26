@@ -290,6 +290,15 @@ _FULL_OPAQUE_EXCLUDE = [
     # spec isn't enough (the wrapper remains) — replaced by typed tools below.
     r"^/webrobot/api/manifest/apply$",
     r"^/webrobot/api/manifest/validate$",
+    # Salvataggio pipeline del mirror tenant: il corpo E' tipizzato, ma lo schema pubblicato
+    # NON e' quello del codice in esecuzione. Misurato il 26-09-2026: l'immagine dell'API mette
+    # sul classpath una copia dei jar dei plugin ferma al 25-08, mentre i plugin veri arrivano da
+    # MinIO; swagger scansiona la copia vecchia, quindi lo spec descrive l'API di un mese prima.
+    # In concreto `organization_id` (assegnare la pipeline a un'altra organizzazione) esiste
+    # nell'endpoint ma non nello spec, e FastMCP scarta i campi che lo schema non dichiara: la
+    # chiamata partiva senza organizzazione e tornava 401. Con il corpo costruito qui sotto lo
+    # strumento non dipende piu' da quanto lo spec sia aggiornato.
+    r"^/webrobot/api/tenant/save-generated-pipeline$",
     # Job execute reads a raw Map<String,Object> -> opaque OpenAPI body, so FastMCP
     # serializes it per the (empty) schema and DROPS unknown fields like `engine`
     # (the engine selector never reaches Jersey -> always Spark). Replaced by a typed
@@ -441,6 +450,37 @@ def _register_full_tools(mcp: FastMCP, client) -> None:
         if elasticBrowserVmLifecycle is not None:
             body["elasticBrowserVmLifecycle"] = elasticBrowserVmLifecycle
         return await _post(f"/webrobot/api/projects/id/{projectId}/jobs/{jobId}/execute", body)
+
+    @mcp.tool(name="saveGeneratedPipeline")
+    async def save_generated_pipeline(pipeline_name: str, pipeline_yaml: str,
+                                      organization_id: int | str | None = None,
+                                      engine: str | None = None,
+                                      execute: bool | str | None = None,
+                                      datasetId: int | str | None = None) -> dict:
+        """Salva (upsert per nome) una pipeline nel mirror tenant e, con execute, la avvia.
+
+        `organization_id` e' l'organizzazione a cui ASSEGNARE la pipeline; omesso, vale quella di
+        chi chiama. Serve ad assistere un cliente nel setup: chi costruisce la pipeline non e' chi
+        la possiede. Non e' un permesso in piu' — l'API lo concede a un super_admin e a un'agenzia
+        rivenditrice verso i propri tenant figli, e risponde 403 a chiunque altro punti a
+        un'organizzazione non sua. Una chiave super_admin non ha organizzazione propria, quindi
+        senza questo campo il salvataggio risponde 401: per lei il campo e' obbligatorio.
+
+        `engine` vale per l'eventuale esecuzione immediata: "scrapy" | "analytics" | "hybrid",
+        omesso = Spark. POSTs to /webrobot/api/tenant/save-generated-pipeline."""
+        body: dict = {"pipeline_name": pipeline_name, "pipeline_yaml": pipeline_yaml}
+        # Gli argomenti arrivano spesso come stringa anche quando il tipo dichiarato e' int/bool:
+        # l'API vuole organization_id come stringa, quindi si normalizza qui invece di fidarsi.
+        if organization_id is not None:
+            body["organization_id"] = str(organization_id)
+        if engine:
+            body["engine"] = engine
+        if execute is not None:
+            body["execute"] = execute if isinstance(execute, bool) else \
+                str(execute).strip().lower() in ("true", "1", "yes")
+        if datasetId is not None:
+            body["datasetId"] = int(datasetId)
+        return await _post("/webrobot/api/tenant/save-generated-pipeline", body)
 
     @mcp.tool(name="manifestValidate")
     async def manifest_validate(yaml: str) -> dict:
