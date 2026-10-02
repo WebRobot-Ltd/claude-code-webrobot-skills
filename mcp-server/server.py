@@ -366,6 +366,33 @@ def _register_full_tools(mcp: FastMCP, client) -> None:
         except Exception:
             return {"raw": r.text[:1000]}
 
+    async def _get(path: str, params: dict | None = None):
+        r = await client.get(path, params=params or {})
+        if r.status_code >= 400:
+            return {"error": f"HTTP {r.status_code}", "detail": r.text[:600]}
+        try:
+            return r.json()
+        except Exception:
+            return {"raw": r.text[:1000]}
+
+    @mcp.tool(name="catalogSources")
+    async def catalog_sources(country: str | None = None, category: str | None = None,
+                              topic: str | None = None, fetch: str | None = None,
+                              ready: str | None = None, limit: int = 50) -> dict:
+        """Curated platform source catalog: which sources exist per country / category / topic and —
+        crucially — HOW to fetch each one (fetch_method 'wget' = simple HTTP vs 'browser' = camoufox
+        visit), its anti_bot posture, whether a residential proxy is needed, whether it is reachable
+        now (ready), and any pre-inferred `selectors` recipe. GET /webrobot/api/catalog/sources.
+
+        Use it to pick sources and their fetch method WITHOUT rediscovering: prefer ready=true,
+        map fetch_method -> stage (wget -> wget/fetch, browser -> visit). anti_bot='login' means the
+        source needs its official API, not scraping. Results are ordered cheapest-first."""
+        params = {k: v for k, v in {
+            "country": country, "category": category, "topic": topic,
+            "fetch": fetch, "ready": ready, "limit": limit,
+        }.items() if v is not None}
+        return await _get("/webrobot/api/catalog/sources", params)
+
     @mcp.tool(name="uploadDatasetJson")
     async def upload_dataset_json(name: str, content: str | None = None,
                                   content_base64: str | None = None,
