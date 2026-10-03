@@ -378,18 +378,25 @@ def _register_full_tools(mcp: FastMCP, client) -> None:
     @mcp.tool(name="catalogSources")
     async def catalog_sources(country: str | None = None, category: str | None = None,
                               topic: str | None = None, fetch: str | None = None,
-                              ready: str | None = None, limit: int = 50) -> dict:
+                              ready: str | None = None, limit: int = 50,
+                              include_selectors: bool = True) -> dict:
         """Curated platform source catalog: which sources exist per country / category / topic and —
         crucially — HOW to fetch each one (fetch_method 'wget' = simple HTTP vs 'browser' = camoufox
         visit), its anti_bot posture, whether a residential proxy is needed, whether it is reachable
-        now (ready), and any pre-inferred `selectors` recipe. GET /webrobot/api/catalog/sources.
+        now (ready), and the pre-inferred `selectors` RECIPE (segment / fields / search / pagination /
+        detail_link / detail_fields). GET /webrobot/api/catalog/sources.
 
-        Use it to pick sources and their fetch method WITHOUT rediscovering: prefer ready=true,
-        map fetch_method -> stage (wget -> wget/fetch, browser -> visit). anti_bot='login' means the
-        source needs its official API, not scraping. Results are ordered cheapest-first."""
+        `include_selectors` (default true) asks for the recipe; the platform returns it only to
+        data-engineering callers (the `etl:create` scope), otherwise just the metadata. When a
+        `selectors` recipe is present, BUILD the pipeline from it (do NOT rediscover): map
+        fetch_method -> stage (wget -> wget/fetch, browser -> visit), drive `search` with a
+        deterministic input/click, paginate per `pagination`, extract with `flatSelect` on
+        segment/fields, and follow `detail_link` via wgetJoin/visitJoin for detail_fields.
+        anti_bot='login' means the source needs its official API, not scraping. Ordered cheapest-first."""
         params = {k: v for k, v in {
             "country": country, "category": category, "topic": topic,
             "fetch": fetch, "ready": ready, "limit": limit,
+            "includeSelectors": "true" if include_selectors else None,
         }.items() if v is not None}
         return await _get("/webrobot/api/catalog/sources", params)
 
