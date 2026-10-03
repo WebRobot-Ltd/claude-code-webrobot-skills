@@ -25,7 +25,14 @@ The platform keeps a curated **source catalog** (`GET /webrobot/api/catalog/sour
 - Prefer sources the catalog marks reachable (probe-verified, or browser-validated `ok`); skip `anti_bot: login` for scraping (use their API); treat strongly-blocked sources as out of scope unless a setup has been agreed with the client.
 - This skips source discovery — the most expensive part of design — so do it whenever a catalog or SOURCES list is available, and only discover from scratch when neither is.
 
-**Pre-set selectors — fast path + self-heal.** A catalog source may carry a `selectors` recipe (a repeating-item `segment`, its `fields` as `{selector, as, method}`, and `pagination`), pre-inferred offline. When it is present, build the `flatSelect`/`extract` **directly from it — do NOT call wizard inference**. Then DRY-RUN once with `wizardValidate`: if `record_count > 0`, deliver. Only if it returns **0 rows** (the site changed its markup) do you infer fresh selectors with the wizard — and the new recipe is written back so the next run is cheap again. So the loop is: **cached recipe → validate → re-infer only on a miss.** This keeps per-run inference near zero for sources already set up, and the agent notices and repairs a source that drifted.
+**Pre-set selectors — read the catalog FIRST, then build from the recipe (fast path + self-heal).** Before any live/wizard inference, fetch the source's `selectors` recipe from the catalog (`catalogSources` / `GET …/catalog/sources`). It is pre-inferred offline and may carry up to **five** parts — build the pipeline directly from whichever are present, do **NOT** call wizard inference:
+
+- **`segment` + `fields`** (`{selector, as, method}`) — the repeating item list (identified offline with PTA) → `flatSelect`/`extract`.
+- **`search`** (`{present, input, submit}`) — the site's internal search box → drive it with `fetch` + `auto_internal_search` (query from the request) so you land on the results page *before* extracting.
+- **`pagination`** (`{type, selector | param}`) — go beyond page 1: `next_link` / `url_param` / `url_path` → `visitExplore`/`wgetExplore` (follow the next/anchor, set `depth`); `load_more` → `visitPaginate` on that control; `none` → single page.
+- **`detail_link`** (`{selector, method}`) — the link to each item's **detail page** (the join selector) → `visitJoin`/`wgetJoin` to fetch each detail page when the request needs per-item detail, not just the listing.
+
+So a cataloged e-commerce/forum source assembles end-to-end with **zero inference**: `fetch`(+`auto_internal_search` if `search`) → paginate (per `pagination`) → `flatSelect`(`segment`,`fields`) → `visitJoin`(`detail_link`) when detail is needed. Then DRY-RUN once with `wizardValidate`: if `record_count > 0`, deliver. Only on a **0-row** miss (the site changed its markup) do you infer fresh with the wizard, and the new recipe is written back. Loop: **catalog recipe → validate → re-infer only on a miss.** This keeps per-run inference near zero for set-up sources and lets the agent notice and repair a source that drifted.
 
 ## Execution engines — pick by KIND and SCALE (pass as `engine` on run)
 
