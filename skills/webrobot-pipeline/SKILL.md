@@ -52,6 +52,53 @@ The **same** pipeline YAML runs on different engines; only the stage set + runti
 
 Selection rule: scraping-only → `scrapy`; relational/Python analysis on small data → `analytics`; mixed scrape+analyze on small data → `hybrid`; big-data / ML / LLM-heavy / many-source → `spark`. `sql_query` and `python_extensions` **no longer require Spark** for entry-tier volumes — they run on `analytics`/`hybrid` too (DuckDB SQL; the Spark vs DuckDB SQL dialects are both ANSI and largely interchangeable). SCALE BOUND: analytics/hybrid are single-node/in-RAM — escalate to `spark` when the data won't fit a worker's memory.
 
+## webSearch — Google text search for news/opinion COVERAGE (sentiment vertical)
+
+`webSearch` (example-plugin, Spark) is the TEXT search stage (distinct from `searchEngine`, which is
+EAN/product/image search and REQUIRES an `ean` — never use it for opinion/news). It runs Google CSE
+for a query + variants, paginates past 10/request, de-dupes by link, emits ONE ROW PER RESULT
+(`result_link`/`result_title`/`result_snippet`/`result_source`); then you fetch each `$result_link`.
+
+COVERAGE (a sentiment run must persist **≥50 real-body docs**; the ceiling is how many DISTINCT urls
+Google has, not the number requested):
+- `num_results: 80` (paginates 8 pages; CSE cap 100); never below 60.
+- `query_variants`: **≥6 DISTINCT ANGLES, not synonyms** (synonyms collapse on the link-dedup). Mix an
+  interview angle, a named event/policy, a quote/clash, plus `site:<trusted domain> <entity>` for 2-3
+  catalogued domains.
+- `date_restrict: m6` for an entity (m2 rarely has 50 distinct articles); widen to y1 if thin.
+- When news is thin, add a forum/social source (one row PER COMMENT multiplies records).
+
+FETCH = **`visit` (browser), not `wget`** for news/article pages: wget does not render JS → empty body
+→ dropped (~55-90%). `visit` (Camoufox) renders + exits via the per-tenant proxy. `wget` only for
+known-static HTML / PDFs.
+
+PARALLELISM: the pipeline starts from ONE seed row → a SINGLE partition → visits run serially. Insert
+**`- stage: repartition` `args: [8]` right after `webSearch`** (before `visit`) to spread across executors.
+
+```yaml
+pipeline:
+  - stage: webSearch
+    args:
+      - { query: "<entity> opinioni", query_variants: ["<entity> intervista","<entity> <event>","<entity> <policy>","<entity> dichiarazioni","site:ansa.it <entity>","site:repubblica.it <entity>"],
+          num_results: 80, country: "it", date_restrict: "m6" }
+      - "search_results"
+  - stage: repartition
+    args: [8]
+  - stage: visit
+    args: ["$result_link"]
+  - stage: extract
+    args:
+      - - { selector: "body", method: "boilerPipe", as: "text" }
+        - { selector: "meta[property='article:published_time']", method: "attr:content", as: "published_at" }
+  - stage: sentiment_analyze
+    args: ["text"]
+  - stage: sentiment_save
+    args: ["news","text","published_at","result_link","","","<campaign-token-or-blank>"]
+output: { format: parquet, mode: overwrite, path: "${OUTPUT_PARQUET_PATH}" }
+```
+If after extraction fewer than 50 docs have body text, ITERATE in the same run (more angle-variants or
+a forum source) — do not stop at ~10.
+
 ## Documents / PDF extraction — use `wget`, not the browser
 
 Fetching a PDF (or docx/xlsx) URL is transparent: the engine auto-detects the content-type and **Tika-parses it into XHTML**, so the fetched Doc is a normal DOM — pull its text with the SAME `extract` stage, **no special PDF stage**.
