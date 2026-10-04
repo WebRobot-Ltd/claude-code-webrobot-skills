@@ -92,10 +92,11 @@ pipeline:
         - { selector: "meta[property='article:published_time']", method: "attr:content", as: "published_at" }
   - stage: sentiment_analyze
     args: ["text"]
-  - stage: sentiment_save
-    args: ["news","text","published_at","result_link","","","<campaign-token-or-blank>"]
 output: { format: parquet, mode: overwrite, path: "${OUTPUT_PARQUET_PATH}" }
 ```
+The ETL lane ENDS at `sentiment_analyze` → `output: parquet`. Do **NOT** append `sentiment_save`: the
+run's parquet output IS the sentiment dataset, already associated with this job — the charts read it
+per-job, so results never mix across runs (no DB persistence, no campaign token needed).
 If after extraction fewer than 50 docs have body text, ITERATE in the same run (more angle-variants or
 a forum source) — do not stop at ~10.
 
