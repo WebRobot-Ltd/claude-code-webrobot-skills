@@ -379,7 +379,7 @@ def _register_full_tools(mcp: FastMCP, client) -> None:
     async def catalog_sources(country: str | None = None, category: str | None = None,
                               topic: str | None = None, fetch: str | None = None,
                               ready: str | None = None, limit: int = 50,
-                              include_selectors: bool = True) -> dict:
+                              include_selectors: bool = True, domain: str | None = None) -> dict:
         """Curated platform source catalog: which sources exist per country / category / topic and —
         crucially — HOW to fetch each one (fetch_method 'wget' = simple HTTP vs 'browser' = camoufox
         visit), its anti_bot posture, whether a residential proxy is needed, whether it is reachable
@@ -392,10 +392,15 @@ def _register_full_tools(mcp: FastMCP, client) -> None:
         fetch_method -> stage (wget -> wget/fetch, browser -> visit), drive `search` with a
         deterministic input/click, paginate per `pagination`, extract with `flatSelect` on
         segment/fields, and follow `detail_link` via wgetJoin/visitJoin for detail_fields.
-        anti_bot='login' means the source needs its official API, not scraping. Ordered cheapest-first."""
+        anti_bot='login' means the source needs its official API, not scraping. Ordered cheapest-first.
+
+        `domain` (e.g. "farmae.it") returns the row(s) of ONE site — use it to find the recipe the
+        auto-setup already validated before inducing selectors live. Each row has `legal_status`
+        (ok | licence | unverified): "licence" means its terms restrict automated collection — remind
+        the user they need a licence, do not refuse."""
         params = {k: v for k, v in {
             "country": country, "category": category, "topic": topic,
-            "fetch": fetch, "ready": ready, "limit": limit,
+            "fetch": fetch, "ready": ready, "limit": limit, "domain": domain,
             "includeSelectors": "true" if include_selectors else None,
         }.items() if v is not None}
         return await _get("/webrobot/api/catalog/sources", params)
