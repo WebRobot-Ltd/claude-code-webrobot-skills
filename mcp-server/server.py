@@ -323,6 +323,11 @@ _FULL_OPAQUE_EXCLUDE = [
 # organizzazione) funzionano benissimo e sono usate di continuo. Escluderle per ogni metodo, come
 # fa l'elenco qui sopra, avrebbe tolto anche quelle.
 _FULL_METHOD_SCOPED_EXCLUDE = [
+    # getStage: the generated tool's path param is `name`, but agents call it with `stage_name` (the
+    # name listStages uses). FastMCP drops the unknown arg and leaves `{name}` in the URL → 404
+    # "Stage not found: {name}" on stages that exist (designer run 10-25, resilientExplore).
+    # Replaced by a typed getStage accepting both.
+    (r"^/webrobot/api/manifest/stages/[^/]+$", ["GET"]),
     (r"^/webrobot/api/billing/plans$", ["POST"]),
     (r"^/webrobot/api/billing/plans/[^/]+$", ["PUT"]),
 ]
@@ -521,9 +526,22 @@ def _register_full_tools(mcp: FastMCP, client) -> None:
             body["datasetId"] = int(datasetId)
         return await _post("/webrobot/api/tenant/save-generated-pipeline", body)
 
+    @mcp.tool(name="getStage")
+    async def get_stage(name: str | None = None, stage_name: str | None = None) -> dict:
+        """One ETL stage of the catalogue by name (or alias): its arguments, description and a YAML
+        example. GET /webrobot/api/manifest/stages/{name}. Pass the stage as `name` (or `stage_name`,
+        e.g. "resilientExplore"). To browse or search many stages use listStages."""
+        n = (name or stage_name or "").strip()
+        if not n:
+            return {"error": "pass the stage name as `name` (e.g. resilientExplore)"}
+        from urllib.parse import quote
+        return await _get(f"/webrobot/api/manifest/stages/{quote(n, safe='')}", {})
+
     @mcp.tool(name="manifestValidate")
     async def manifest_validate(yaml: str) -> dict:
         """Dry-run a manifest YAML (no DB writes): parses + reports what would change.
+        A `kind: Pipeline` document needs `metadata.category` (the agent category it is linked to,
+        e.g. data_engineer) — without it validation fails with "Pipeline.metadata.category is required".
         NB cross-doc refs to not-yet-created entities (e.g. a Pipeline referencing a
         Project defined in the same manifest) report 'not found' in validate — that's
         expected; they resolve at apply time via tier ordering. POSTs to
