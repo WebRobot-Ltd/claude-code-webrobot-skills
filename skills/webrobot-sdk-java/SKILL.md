@@ -3,7 +3,7 @@ name: webrobot-sdk-java
 description: Consume the WebRobot REST API from a Java/Kotlin/Scala application using the public webrobot-sdk JAR. Use when the user wants to integrate WebRobot into a JVM service, build automation, or partner application — NOT for writing ETL/Jersey plugins (those use a different SDK; see /webrobot-plugin-dev).
 argument-hint: [task description, e.g. "list projects from my Spring Boot app"]
 user-invocable: true
-allowed-tools: Read Write Edit Bash(mvn *) Bash(JAVA_HOME=* mvn *) Bash(./gradlew *) Bash(JAVA_HOME=* ./gradlew *) Bash(curl -fsSL https://api.webrobot.eu/webrobot/api/catalog/stages*)
+allowed-tools: Read Write Edit Bash(mvn *) Bash(JAVA_HOME=* mvn *) Bash(./gradlew *) Bash(JAVA_HOME=* ./gradlew *) Bash(curl -fsSL https://api.webrobot.eu/api/webrobot/api/catalog/stages*)
 ---
 
 # WebRobot Java SDK (client)
@@ -57,7 +57,7 @@ import WebRobot.Cli.Sdk.openapi.OpenApiSdkAdapter;
 import eu.webrobot.openapi.client.ApiClient;
 import eu.webrobot.openapi.client.api.DefaultApi;
 
-OpenApiSdkAdapter sdk = new OpenApiSdkAdapter("https://api.webrobot.eu");
+OpenApiSdkAdapter sdk = new OpenApiSdkAdapter("https://api.webrobot.eu/api")  /* generated paths start with /webrobot/api */;
 
 // Option A — API key (recommended for service-to-service)
 sdk.withApiKey("X-API-Key", System.getenv("WEBROBOT_API_KEY"));
@@ -174,7 +174,7 @@ The typed `DefaultApi` throws `eu.webrobot.openapi.client.ApiException` instead 
 |------|------|
 | JVM service / Spring Boot / Micronaut backend | **Java SDK** (this) |
 | Shell script / CI pipeline | `webrobot` CLI |
-| Conversational queries from Claude Code / Cursor | MCP tools (`mcp__webrobot__*`) |
+| Conversational queries from Claude Code / Cursor | the plugin's `webrobot` MCP tools (see webrobot-setup) |
 | Inside the ETL engine (custom stage) | `webrobot-plugin-sdk` (Scala SDK) — see `/webrobot-plugin-dev` |
 | Inside a Jersey API plugin | `webrobot-jersey-plugin-sdk` — see `/webrobot-plugin-dev` |
 
@@ -230,7 +230,7 @@ String executionId = result.path("executionId").asText();
 - **Use `GenericClient`** for partner-vertical endpoints, dynamic responses, or path-templated GETs you find boilerplate.
 - **Never embed credentials in source.** Use env vars (`WEBROBOT_API_KEY` / `WEBROBOT_JWT`) or a config file outside the repo.
 - **Catch `GenericApiException` / `ApiException`** explicitly — both expose statusCode/errorBody for structured handling.
-- **The catalog endpoint is public.** Don't put auth headers on `/webrobot/api/catalog/stages` — they're ignored anyway, and your client handles the response uniformly.
+- **The catalog endpoint needs auth** like every other call: `/api/webrobot/api/catalog/stages` returns 401 without a key.
 
 ## On $ARGUMENTS
 

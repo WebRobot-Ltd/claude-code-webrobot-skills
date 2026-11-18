@@ -26,20 +26,20 @@ Reference implementations (all on JitPack — partners consume with zero auth):
 | [webrobot-sentimental-plugin](https://github.com/WebRobot-Ltd/webrobot-sentimental-plugin) (etl + api + cli end-to-end) | three-module worked example |
 | [webrobot-price-comparison](https://github.com/WebRobot-Ltd/webrobot-price-comparison) | source-only reference |
 
-**Stage catalog** — `GET https://api.webrobot.eu/webrobot/api/catalog/stages` (public, no auth). Lists every stage already registered on the platform with its `arg_schema`.
+**Stage catalog** — `GET https://api.webrobot.eu/api/webrobot/api/catalog/stages` (authenticated: send `X-API-Key` or a Bearer JWT). Lists every stage already registered on the platform with its `arg_schema`.
 
 ```bash
 # Discover all stages
-curl -fsSL https://api.webrobot.eu/webrobot/api/catalog/stages
+curl -fsSL https://api.webrobot.eu/api/webrobot/api/catalog/stages
 
 # Filter by plugin to verify what your plugin currently exports
-curl -fsSL "https://api.webrobot.eu/webrobot/api/catalog/stages?plugin_id=my-plugin"
+curl -fsSL "https://api.webrobot.eu/api/webrobot/api/catalog/stages?plugin_id=my-plugin"
 
 # Search by stage name or alias to avoid collisions before naming
-curl -fsSL "https://api.webrobot.eu/webrobot/api/catalog/stages?stage_name=score"
+curl -fsSL "https://api.webrobot.eu/api/webrobot/api/catalog/stages?stage_name=score"
 
 # Filter to actions (spark_action) when contributing browser automation steps
-curl -fsSL "https://api.webrobot.eu/webrobot/api/catalog/stages?plugin_type=spark_action"
+curl -fsSL "https://api.webrobot.eu/api/webrobot/api/catalog/stages?plugin_type=spark_action"
 ```
 
 Always query the catalog **before naming a new stage** — name collisions silently override existing stages at plugin load. The catalog also tells you what arg shape partners are accustomed to, useful when designing a stage that needs to compose with existing pipelines.

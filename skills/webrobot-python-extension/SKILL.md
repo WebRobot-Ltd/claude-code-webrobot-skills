@@ -3,7 +3,6 @@ name: webrobot-python-extension
 description: Write, register, and embed Python Extension functions for WebroBot pipelines. Use when the user wants to add custom row-level logic to a pipeline without building a Scala plugin — inline in the YAML or registered via API.
 argument-hint: [description of the transform logic or existing yaml path]
 user-invocable: true
-allowed-tools: mcp__webrobot__list_stages mcp__webrobot__describe_stage mcp__webrobot__validate_manifest mcp__webrobot__apply_manifest mcp__webrobot__llm_infer Read Write Edit Bash(webrobot *)
 ---
 
 # WebRobot Python Extensions
@@ -20,7 +19,7 @@ Use a **Scala ETL plugin** (see `/webrobot-plugin-dev`) when the stage must be r
 Before naming a Python Extension, check the catalog so the name doesn't collide with an existing native or plugin stage:
 
 ```bash
-curl -fsSL "https://api.webrobot.eu/webrobot/api/catalog/stages?stage_name=my_transform"
+curl -fsSL "https://api.webrobot.eu/api/webrobot/api/catalog/stages?stage_name=my_transform"
 ```
 
 The catalog endpoint is public (no auth required, read-only).
@@ -115,7 +114,7 @@ Extensions are registered once via API and referenced by name in the YAML. Best 
 
 Register:
 ```bash
-curl -X POST "$WEBROBOT_API/webrobot/api/python-extensions/register" \
+curl -X POST "$WEBROBOT_API/api/webrobot/api/python-extensions/python-extensions/register" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -160,7 +159,7 @@ python_extensions:
 ## Uploading a YAML with inline extensions
 
 ```bash
-curl -X POST "$WEBROBOT_API/webrobot/api/python-extensions/process-yaml" \
+curl -X POST "$WEBROBOT_API/api/webrobot/api/python-extensions/process-yaml" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

@@ -1,15 +1,21 @@
 {
   "name": "webrobot",
-  "description": "WebRobot ETL platform — pipeline builder, job management, stage catalog, agent management, dataset management",
-  "version": "0.1.0",
-  "author": { "name": "WebRobot Ltd", "email": "ceo@webrobot.eu" },
+  "description": "WebRobot platform for Claude Code — datasets, pipelines (Spark/Scrapy, ephemeral VMs), Agent Studio agents and teams, background runs and schedules, vertical apps, knowledge and analytics, through the authenticated WebRobot MCP",
+  "version": "0.2.0",
+  "author": {
+    "name": "WebRobot Ltd",
+    "email": "ceo@webrobot.eu"
+  },
   "homepage": "https://webrobot.eu",
-  "repository": "https://github.com/WebRobot-Ltd/webrobot-claude-plugin",
+  "repository": "https://github.com/WebRobot-Ltd/claude-code-webrobot-skills",
   "license": "MIT",
   "mcpServers": {
     "webrobot": {
       "type": "http",
-      "url": "https://mcp.webrobot.eu/mcp"
+      "url": "https://mcp-full.webrobot.eu/mcp",
+      "headers": {
+        "X-API-Key": "${WEBROBOT_API_KEY}"
+      }
     }
   }
 }

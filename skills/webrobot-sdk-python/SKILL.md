@@ -3,7 +3,7 @@ name: webrobot-sdk-python
 description: Consume the WebRobot REST API from a Python application using the public webrobot-sdk Python package. Use when the user wants to integrate WebRobot into a Python script, ETL job, or backend — NOT for writing Python Extensions inside the ETL engine (those use a different mechanism; see /webrobot-python-extension).
 argument-hint: [task description, e.g. "list projects from a Python script"]
 user-invocable: true
-allowed-tools: Read Write Edit Bash(python *) Bash(python3 *) Bash(pip *) Bash(curl -fsSL https://api.webrobot.eu/webrobot/api/catalog/stages*)
+allowed-tools: Read Write Edit Bash(python *) Bash(python3 *) Bash(pip *) Bash(curl -fsSL https://api.webrobot.eu/api/webrobot/api/catalog/stages*)
 ---
 
 # WebRobot Python SDK (client)
@@ -43,13 +43,13 @@ from webrobot.rest import ApiException
 
 # Option A — API key (recommended for service-to-service)
 configuration = webrobot.Configuration(
-    host="https://api.webrobot.eu",
+    host="https://api.webrobot.eu/api",  # generated paths start with /webrobot/api
     api_key={"X-API-Key": os.environ["WEBROBOT_API_KEY"]},
 )
 
 # Option B — JWT bearer (recommended when user-context is needed)
 configuration = webrobot.Configuration(
-    host="https://api.webrobot.eu",
+    host="https://api.webrobot.eu/api",  # generated paths start with /webrobot/api
     access_token=os.environ["WEBROBOT_JWT"],
 )
 
@@ -84,7 +84,7 @@ def load_cli_credentials() -> dict:
 import webrobot
 
 config = webrobot.Configuration(
-    host="https://api.webrobot.eu",
+    host="https://api.webrobot.eu/api",  # generated paths start with /webrobot/api
     api_key={"X-API-Key": "wr_..."},
 )
 
@@ -129,7 +129,7 @@ For partner-vertical endpoints not yet in `DefaultApi`, or dynamic JSON response
 ```python
 import os, requests
 
-API = "https://api.webrobot.eu"
+API = "https://api.webrobot.eu/api"  # paths below start with /webrobot/api
 HEADERS = {"X-API-Key": os.environ["WEBROBOT_API_KEY"]}
 
 # Sentiment plugin partner-vertical endpoint
@@ -166,7 +166,7 @@ def api_call(method: str, path: str, *, params: dict | None = None,
 import requests
 
 # Discover available pipeline stages (zero auth — public read-only)
-r = requests.get("https://api.webrobot.eu/webrobot/api/catalog/stages",
+r = requests.get("https://api.webrobot.eu/api/webrobot/api/catalog/stages",
                  params={"plugin_type": "etl"})
 stages = r.json()["data"]
 for s in stages:
@@ -209,7 +209,7 @@ except requests.HTTPError as e:
 |------|------|
 | Python script, FastAPI/Django backend, data-science notebook | **Python SDK** (this) |
 | Shell script / CI pipeline | `webrobot` CLI |
-| Conversational queries from Claude Code / Cursor | MCP tools (`mcp__webrobot__*`) |
+| Conversational queries from Claude Code / Cursor | the plugin's `webrobot` MCP tools (see webrobot-setup) |
 | Custom row-level transform inside an ETL pipeline | `/webrobot-python-extension` (different runtime) |
 
 ---
@@ -269,7 +269,7 @@ print("Execution ID:", result["executionId"])
 - **Use raw `requests`** (or the `api_call` helper) for partner-vertical endpoints, when the response has dynamic shape, or you need path templating.
 - **Never embed credentials in source.** Use env vars or a config file outside the repo.
 - **Catch `webrobot.rest.ApiException`** for typed calls, `requests.HTTPError` for generic calls — both expose status + body.
-- **The catalog endpoint is public.** Don't add auth headers to `/webrobot/api/catalog/stages` — wasteful, response is identical.
+- **The catalog endpoint needs auth** like every other call: `/api/webrobot/api/catalog/stages` returns 401 without a key.
 
 ## On $ARGUMENTS
 
