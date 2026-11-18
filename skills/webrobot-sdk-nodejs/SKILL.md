@@ -3,7 +3,7 @@ name: webrobot-sdk-nodejs
 description: Consume the WebRobot REST API from a Node.js / TypeScript application using the public webrobot-sdk npm package. Use when the user wants to integrate WebRobot into a Node service, build automation, browser/electron app, or partner backend.
 argument-hint: [task description, e.g. "list projects from a TypeScript backend"]
 user-invocable: true
-allowed-tools: Read Write Edit Bash(node *) Bash(npm *) Bash(npx *) Bash(yarn *) Bash(pnpm *) Bash(curl -fsSL https://api.webrobot.eu/webrobot/api/catalog/stages*)
+allowed-tools: Read Write Edit Bash(node *) Bash(npm *) Bash(npx *) Bash(yarn *) Bash(pnpm *) Bash(curl -fsSL https://api.webrobot.eu/api/webrobot/api/catalog/stages*)
 ---
 
 # WebRobot Node.js / TypeScript SDK (client)
@@ -43,13 +43,13 @@ import { WebRobotClient } from "webrobot-sdk";
 
 // Option A — API key
 const client = new WebRobotClient({
-  baseUrl: "https://api.webrobot.eu",
+  baseUrl: "https://api.webrobot.eu/api",  // generated paths start with /webrobot/api
   apiKey:  process.env.WEBROBOT_API_KEY,
 });
 
 // Option B — JWT bearer
 const client = new WebRobotClient({
-  baseUrl: "https://api.webrobot.eu",
+  baseUrl: "https://api.webrobot.eu/api",  // generated paths start with /webrobot/api
   jwt:     process.env.WEBROBOT_JWT,
 });
 ```
@@ -89,7 +89,7 @@ function loadCliCredentials(): Record<string, string> {
 import { WebRobotClient } from "webrobot-sdk";
 
 const client = new WebRobotClient({
-  baseUrl: "https://api.webrobot.eu",
+  baseUrl: "https://api.webrobot.eu/api",  // generated paths start with /webrobot/api
   apiKey:  process.env.WEBROBOT_API_KEY!,
 });
 
@@ -157,7 +157,7 @@ async function apiCall<T = unknown>(
       delete remaining[k];
     }
   }
-  const url = new URL(`https://api.webrobot.eu${p}`);
+  const url = new URL(`https://api.webrobot.eu/api${p}`);
   for (const [k, v] of Object.entries(remaining)) {
     if (v !== undefined && v !== null) url.searchParams.append(k, String(v));
   }
@@ -191,7 +191,7 @@ const newProject = await apiCall("POST", "/webrobot/api/projects", {
 
 ```typescript
 const res = await fetch(
-  "https://api.webrobot.eu/webrobot/api/catalog/stages?plugin_type=etl",
+  "https://api.webrobot.eu/api/webrobot/api/catalog/stages?plugin_type=etl",
 );
 const { data } = await res.json();
 data.forEach((s: any) => console.log(s.stage_name, "—", s.description));
@@ -228,7 +228,7 @@ For `fetch`-based generic calls, the `Error` thrown by `apiCall` carries the sta
 | Node service / Express / Fastify / Next.js backend | **Node.js SDK** (this) |
 | Browser / Electron app | The same client works (`fetch`-based, no node-specific deps) |
 | Shell script / CI | `webrobot` CLI |
-| Claude Code / Cursor inline | MCP tools (`mcp__webrobot__*`) |
+| Claude Code / Cursor inline | the plugin's `webrobot` MCP tools (see webrobot-setup) |
 | Browser-side, when you don't want to expose API keys | Use a thin server proxy that owns the credentials |
 
 ---
@@ -260,7 +260,7 @@ console.log(allJobs.flat().length, "jobs total");
 
 ```typescript
 const res = await fetch(
-  `https://api.webrobot.eu/webrobot/api/projects/42/jobs/7/logs?stream=true`,
+  `https://api.webrobot.eu/api/webrobot/api/projects/42/jobs/7/logs?stream=true`,
   { headers: { "X-API-Key": process.env.WEBROBOT_API_KEY! } },
 );
 const reader = res.body!.getReader();
@@ -294,7 +294,7 @@ const projects = (await client.projectsList()) as JobProjectDto[];
 - **Never put API keys in browser bundles.** Use a server-side proxy or short-lived JWT.
 - **Use env vars or a server-side secret manager.** Don't commit credentials.
 - **Catch `WebRobotError`** explicitly for the curated client, status-code checks for `apiCall`.
-- **Catalog is public.** Don't waste an auth header on `/webrobot/api/catalog/stages`.
+- **The catalog needs auth**: `/api/webrobot/api/catalog/stages` returns 401 without a key.
 
 ## On $ARGUMENTS
 

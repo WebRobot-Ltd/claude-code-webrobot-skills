@@ -3,7 +3,7 @@ name: webrobot-frontend-plugin-dev
 description: Build a partner-authored UI plugin for the WebRobot dashboard (Next.js). Plugins ship as a ZIP with ESM bundles, are uploaded to MinIO, and hot-load in the dashboard via blob-URL import() — no rebuild of the host app required. Use when the user wants to add a custom dashboard view, configuration page, or vertical UI to the WebRobot host shell.
 argument-hint: [plugin description, e.g. "sentiment dashboard with timeseries chart"]
 user-invocable: true
-allowed-tools: Read Write Edit Bash(npm *) Bash(npx *) Bash(yarn *) Bash(pnpm *) Bash(node *) Bash(curl -fsSL https://api.webrobot.eu/webrobot/api/catalog/stages*)
+allowed-tools: Read Write Edit Bash(npm *) Bash(npx *) Bash(yarn *) Bash(pnpm *) Bash(node *) Bash(curl -fsSL https://api.webrobot.eu/api/webrobot/api/catalog/stages*)
 ---
 
 # WebRobot Frontend Plugin Developer
@@ -232,7 +232,7 @@ Three options, in order of preference:
 
 1. **Direct API call** to the public catalog or your vertical's endpoints:
    ```ts
-   fetch('https://api.webrobot.eu/webrobot/api/sentiment/timeseries', {
+   fetch('https://api.webrobot.eu/api/webrobot/api/sentiment/timeseries', {
      headers: { 'X-API-Key': /* never embed in bundle — see #3 */ },
    })
    ```
@@ -246,7 +246,7 @@ Three options, in order of preference:
 ## Public catalog access — no auth
 
 ```ts
-const res = await fetch('https://api.webrobot.eu/webrobot/api/catalog/stages?plugin_type=etl');
+const res = await fetch('https://api.webrobot.eu/api/webrobot/api/catalog/stages?plugin_type=etl');
 const { data } = await res.json();
 // Useful for stage-pickers in your plugin's settings views
 ```

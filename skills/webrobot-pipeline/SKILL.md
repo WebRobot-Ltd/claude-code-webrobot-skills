@@ -1,105 +1,405 @@
 ---
 name: webrobot-pipeline
-description: Build, validate, and deploy WebRobot ETL pipeline manifests. Use when the user wants to create or modify a pipeline, add stages, configure a scraping workflow, or run a pipeline job.
+description: Build, validate, deploy and run WebRobot ETL pipelines (manifest YAML with kinds Project / Dataset / Pipeline / Job). Use when the user wants to create or modify a pipeline, add stages, configure a scraping workflow, run a pipeline job, or query its results.
 argument-hint: [pipeline description or yaml path]
 user-invocable: true
-allowed-tools: mcp__webrobot__list_stages mcp__webrobot__describe_stage mcp__webrobot__search_stages mcp__webrobot__suggest_pipeline_stages mcp__webrobot__validate_manifest mcp__webrobot__apply_manifest mcp__webrobot__run_pipeline mcp__webrobot__list_projects mcp__webrobot__list_jobs mcp__webrobot__list_categories mcp__webrobot__list_agents mcp__webrobot__llm_infer Read Write Edit Bash(webrobot *) Bash(curl -fsSL https://api.webrobot.eu/webrobot/api/catalog/stages*)
+allowed-tools: Read Write Edit Bash(webrobot *) Bash(curl -fsSL https://api.webrobot.eu/api/webrobot/api/*)
 ---
 
 # WebRobot Pipeline Builder
 
-You build, validate, and deploy WebRobot ETL pipeline manifests for the engine's `PipelineParser`. Your authority on what stages exist and what they accept is the **public stage catalog**, never your training data — partner plugins ship and version their stages independently.
+You build, validate, deploy and run WebRobot ETL pipelines. Your authority on what stages exist and what they accept is the **live stage catalog**, never your training data: partner plugins ship and version their stages independently.
 
-## Compliance — what you may and may not design (READ FIRST)
+## Tools and endpoints
+
+The plugin's MCP server (`webrobot`) is the authenticated WebRobot API; its tool names are the API operationIds. The ones this skill uses:
+
+| Purpose | Tool | REST (base `https://api.webrobot.eu/api`) |
+|---|---|---|
+| List / filter stages | `listStages` (`plugin_id`, `stage_name`, `plugin_type`) | `GET /webrobot/api/catalog/stages` |
+| One stage: args, description, YAML example | `getStage` (`name` or `stage_name`, aliases accepted) | `GET /webrobot/api/manifest/stages/{name}` |
+| Search stages by text | `listStages_1` (`search`, `category`, `type`) or `catalogStages` (`search`) | `GET /webrobot/api/manifest/stages`, `GET /webrobot/api/tenant/catalog/stages` |
+| Stage suggestions from an intent | `suggestStages_1` (`intent`) | `POST /webrobot/api/tenant/wizard/suggest` |
+| Curated source catalog (+ selector recipes) | `catalogSources` (`country`, `category`, `topic`, `domain`, `include_selectors`) | `GET /webrobot/api/catalog/sources` |
+| Dry-run a manifest | `manifestValidate` (`yaml`) | `POST /webrobot/api/manifest/validate` |
+| Apply a manifest | `manifestApply` (`yaml`) | `POST /webrobot/api/manifest/apply` |
+| Quick save (+ optional run) of one pipeline | `saveGeneratedPipeline` (`pipeline_name`, `pipeline_yaml`, `engine`, `execute`, `datasetId`, `organization_id`) | `POST /webrobot/api/tenant/save-generated-pipeline` |
+| Pipeline Designer draft slot | `pipelineDraftPut` / `pipelineDraftGet` / `pipelineDraftDelete` (`context: "etl:pipeline-designer"`) | `/webrobot/api/tenant/pipeline-draft` |
+| Projects / jobs | `getAllProjects`, `createProject`, `getProjectFromName`, `getProjectJobs`, `getJob_1` | `/webrobot/api/projects/...` |
+| Upload input data (CSV) | `uploadDatasetJson` (`name`, `content` or `content_base64`, `dataset_type`) | JSON upload, returns `datasetId` |
+| Datasets | `getAllDatasets`, `getDataset`, `getDatasetFields` | `/webrobot/api/datasets/...` |
+| Run a job | `executeJob_1` (`projectId`, `jobId`, `engine`, BYOC flags, `options`) | `POST /webrobot/api/projects/id/{p}/jobs/{j}/execute` |
+| Wait / status | `waitForExecution` (`projectId`, `jobId`, `executionId`, `timeoutSec`, `logTail`), `getExecutionStatus_1`, `executionStatus` (`executionId`) | |
+| Logs | `getExecutionLogs_1` (`projectId`, `jobId`, `executionId`, `podType`, `tail`), `executionLogs` (`executionId`) | |
+| Output preview | `executionOutput` (`executionId`, `limit`) | |
+| Tasks of a job | `getAllTasks` (`projectId`, `jobId`), `getTaskStatus` | |
+| SQL on a run's output | `queryDatasetByTask` (`taskId`, `sql` with `{table}`), `getDatasetInfoByTask` | `POST /webrobot/api/datasets/query/task/{taskId}` |
+| SQL across datasets | `executeQuery` (`sql` with `[<datasetId>]` shortcuts) | `POST /webrobot/api/datasets/query` |
+| Stop / cancel | `stopJob`, `cancelExecution_2` | |
+
+Auth for direct REST calls: `X-API-Key: <key>` or `Authorization: Bearer <JWT>`. Every endpoint above requires auth, including the stage catalog. The old base path `https://api.webrobot.eu/webrobot/api/...` (without the leading `/api`) returns 404.
+
+```bash
+curl -fsSL "https://api.webrobot.eu/api/webrobot/api/catalog/stages?stage_name=fetch" -H "X-API-Key: $WEBROBOT_API_KEY"
+```
+
+## Compliance: what you may and may not design (READ FIRST)
 
 A pipeline you emit gets replayed on a schedule, so it must stay lawful and within each source's terms of use:
 - Collect only **publicly accessible** pages. Do NOT design a pipeline that logs in, bypasses a paywall, or reads content that requires authentication.
-- Platforms that gate content behind login or an official API — social networks (X/Twitter, Facebook, Instagram, TikTok, LinkedIn, Threads), Reddit beyond public read, and anything the source catalog marks `anti_bot: login` or "official API required" — must be accessed through their **official API/connector**, never by browser-scraping authenticated content.
+- Platforms that gate content behind login or an official API (X/Twitter, Facebook, Instagram, TikTok, LinkedIn, Threads, Reddit beyond public read, and anything the source catalog marks `anti_bot: login` or "official API required") must be accessed through their **official API/connector**, never by browser-scraping authenticated content.
 - If a requested source can only be obtained by breaching its terms, do NOT design it. Answer with a single `NEEDS:` line stating the source needs its official API (or is not permitted) and suggest a compliant alternative.
-- The residential proxy + real browser exist to read **public** pages reliably (geo, rate limits, JS) — not to defeat access controls.
+- A catalog row with `legal_status: licence` means its terms restrict automated collection: remind the user they need a licence; do not refuse.
+- The residential proxy + real browser exist to read **public** pages reliably (geo, rate limits, JS), not to defeat access controls.
 
-## Use the source catalog — do NOT rediscover sources
+## Use the source catalog: do NOT rediscover sources
 
-The platform keeps a curated **source catalog** (`GET /webrobot/api/catalog/sources?country=&category=&topic=`) that has already resolved, per source: the URL, the correct **fetch method** (`wget` vs a real-browser `visit`), its `anti_bot` posture, and whether a residential `proxy` is needed. When the request or the wizard hands you a SOURCES list, or the catalog is reachable:
-- Use those sources and map **fetch_method → stage**: `wget` → `wget`/`fetch`; `browser` → `visit` (camoufox renders JS and handles common public-page bot-protection). Never put `wget` on a `browser` source — it returns an empty shell.
-- Prefer sources the catalog marks reachable (probe-verified, or browser-validated `ok`); skip `anti_bot: login` for scraping (use their API); treat strongly-blocked sources as out of scope unless a setup has been agreed with the client.
-- This skips source discovery — the most expensive part of design — so do it whenever a catalog or SOURCES list is available, and only discover from scratch when neither is.
+`catalogSources` has already resolved, per source: the URL, the **fetch method** (`wget` vs a real-browser `visit`), its `anti_bot` posture, whether a residential `proxy` is needed, and whether it is reachable now. Use `domain` to fetch the row of one site. When the request hands you a SOURCES list, or the catalog has rows for the topic:
+- Map **fetch_method → stage**: `wget` → `wget`/`fetch`; `browser` → `visit` (Camoufox renders JS and handles common public-page bot protection). Never put `wget` on a `browser` source: it returns an empty shell.
+- Prefer sources marked reachable; skip `anti_bot: login` for scraping (use their API); treat strongly blocked sources as out of scope unless a setup has been agreed with the client.
+- Discover from scratch only when neither a catalog row nor a SOURCES list exists.
 
-**Pre-set selectors — read the catalog FIRST, then build from the recipe (fast path + self-heal).** Before any live/wizard inference, fetch the source's `selectors` recipe from the catalog (`catalogSources` / `GET …/catalog/sources`). It is pre-inferred offline and may carry up to **five** parts — build the pipeline directly from whichever are present, do **NOT** call wizard inference:
+**Pre-set selectors: read the recipe FIRST, then build from it (fast path + self-heal).** The `selectors` recipe (returned to callers with the `etl:create` scope) is pre-inferred offline and may carry up to five parts. Build the pipeline directly from whichever are present; do NOT call wizard inference:
 
-- **`segment` + `fields`** (`{selector, as, method}`) — the repeating item list (identified offline with PTA) → `flatSelect`/`extract`.
-- **`search`** (`{present, input, submit}`) — the **pre-inferred** input+submit. Drive them with an explicit, **deterministic** action trace (zero inference): a `fetch`/`visit` whose actions are `[{action: input, args: [<search.input>, "<query>"]}, {action: click, args: [<search.submit>]}]` (or a `waitforselector` on the results), landing on the results page *before* extracting. Do **NOT** use `auto_internal_search` here — it re-infers the input/submit with an LLM, which the stored selectors make unnecessary. Reserve `auto_internal_search` only for sources with **no** stored `search` selectors.
-- **`pagination`** (`{type, selector | param}`) — go beyond page 1: `next_link` / `url_param` / `url_path` → `visitExplore`/`wgetExplore` (follow the next/anchor, set `depth`); `load_more` → `visitPaginate` on that control; `none` → single page.
-- **`detail_link`** + **`detail_fields`** — the per-item **detail page is a JOIN, not part of `flatSelect`** (this is the platform's standard scraping ETL shape). `flatSelect` yields the LISTING rows, each already carrying its item `url`. To add detail you chain a join: `wgetJoin`/`visitJoin` follows that item `url` (`detail_link` = the `url`-field / item-link selector) — one row per item — and then a `flatSelect`/`extract`/`iextract` **on the joined detail page** reads `detail_fields`. So detail = *follow-the-link then extract*, a second level; include it only when the request needs per-item detail, not just the listing.
+- **`segment` + `fields`** (`{selector, as, method}`): the repeating item list → `flatSelect`/`extract`.
+- **`search`** (`{present, input, submit}`): drive it with a deterministic action trace (zero inference): a `fetch`/`visit` whose actions are `[{action: input, args: [<search.input>, "<query>"]}, {action: click, args: [<search.submit>]}]` (or a `waitforselector` on the results), landing on the results page before extracting. Do NOT use `auto_internal_search` here (it re-infers input/submit with an LLM); reserve it for sources with no stored `search` selectors.
+- **`pagination`** (`{type, selector | param}`): `next_link` / `url_param` / `url_path` → `visitExplore`/`wgetExplore` (follow the next anchor, set `depth`); `load_more` → `visitPaginate` on that control; `none` → single page.
+- **`detail_link` + `detail_fields`**: the per-item detail page is a **JOIN, not part of `flatSelect`**. `flatSelect` yields the LISTING rows, each carrying its item `url`; for detail chain `wgetJoin`/`visitJoin` on that `url` (`detail_link`), then `flatSelect`/`extract`/`iextract` on the joined page reads `detail_fields`. Include it only when the request needs per-item detail.
+- **`detail_kind` + `detail_segment`**: news/article detail → ONE text per page (`detail_fields`, e.g. body with `method: boilerPipe`). Forum/thread detail → ONE ROW PER COMMENT: `detail_kind: comments` + `detail_segment` (the repeating post container), so the join is `wgetJoin`/`visitJoin`(`detail_link`) → `flatSelect`(`detail_segment`, `detail_fields`); a 40-reply thread yields ~40 rows. A forum's `detail_segment`/`detail_fields` come from the per-engine template (XenForo/SMF/phpBB/vBulletin/Discourse/Reddit) when the source's `engine` is set: reuse it, do NOT infer comments.
 
-So a cataloged e-commerce/forum source assembles end-to-end with **zero inference**: `fetch`(+ deterministic input/click search action if `search`) → paginate (per `pagination`) → `flatSelect`(`segment`,`fields`) for the listing rows (incl. `url`) → **optionally, for detail:** `wgetJoin`/`visitJoin` on `url`/`detail_link` → `flatSelect`/`extract`/`iextract`(`detail_fields`) on the detail page. Then DRY-RUN once with `wizardValidate` and **judge the result coherently — `record_count > 0` is necessary but NOT the gate**. A recipe is healthy only when BOTH hold:
-- **Plausible row count** — not 0, and not wildly off the recipe's stored `match_count` / the expected magnitude. 1 row where dozens are expected, or thousands where it clearly over-matched a wrong container, both signal drift even though they are "> 0".
-- **Populated key fields** — the rows actually carry the data (non-empty `title`/`url`/`price`/…). A correct `segment` with drifted `fields` returns rows full of nulls: that is a miss, not a pass.
+So a cataloged source assembles with **zero inference**: `fetch` (+ deterministic search actions) → paginate → `flatSelect`(`segment`, `fields`) → optionally `wgetJoin`/`visitJoin` → detail extraction. Then DRY-RUN once with `wizardValidate_1` (`yaml`) and **judge the result coherently; `record_count > 0` is necessary but NOT the gate**:
+- **Plausible row count**: not 0, and not wildly off the recipe's `match_count` / the expected magnitude (1 row where dozens are expected, or thousands from an over-matched container, both signal drift).
+- **Populated key fields**: rows carry real data (non-empty `title`/`url`/`price`/...). A correct `segment` with drifted `fields` returns rows full of nulls: that is a miss.
 
-Only when the data itself shows the **selectors drifted** do you re-infer with the wizard and write the recipe back. Crucially, **separate an extraction failure from a fetch/access failure**: 0 (or junk) rows on a blocked / empty / challenge page — anti-bot, geo, stale proxy, HTTP error — is NOT a markup change, so do NOT re-infer; fix access (proxy/geo/retry) or flag the source as needs-attention, leaving the recipe untouched. Loop: **catalog recipe → validate coherently → re-infer only on genuine selector drift.** This keeps per-run inference near zero for set-up sources and repairs only what actually broke.
+Re-infer with the wizard only when the data shows the **selectors drifted**. Separate an extraction failure from a fetch/access failure: 0 or junk rows on a blocked / empty / challenge page (anti-bot, geo, stale proxy, HTTP error) is NOT a markup change; fix access (proxy/geo/retry) or flag the source, leaving the recipe untouched.
 
-## Execution engines — pick by KIND and SCALE (pass as `engine` on run)
+## Execution engines: pick by KIND and SCALE (`engine` on run)
 
-The **same** pipeline YAML runs on different engines; only the stage set + runtime differ.
+The same pipeline YAML runs on different engines; only the stage set and runtime differ. Pass `engine` to `executeJob_1` (or to `saveGeneratedPipeline` with `execute: true`); omit it for Spark.
 
 | Engine | When | Runtime |
 |--------|------|---------|
-| `scrapy` | pure scraping/ingestion (fetch, visit, explore, join, flatSelect, extract) | lightweight Ray job, remote Camoufox browser, no Spark |
-| `analytics` | pure relational / transform / custom-Python analysis on **small / in-RAM** data (load_*, `sql_query`, dedup, filter, select, `python_row_transform`/`python_dataframe_transform`, save_*) | in-process **DuckDB + Polars**, no Spark cluster |
-| `hybrid` | **scrape → analyze in ONE job** (scraping stages then analytics stages) | scrapy segment feeds its rows straight into the analytics segment |
-| `spark` (default) | big-data SCALE (out-of-RAM, real shuffle, many sources) **and** the stages not yet on the lightweight tier: `sentiment`, clustering, `surebet`, `rag_*`, `intelligent*`/`iextract`, full connector + ML set | distributed Spark on K8s |
+| *(omitted)* = Spark | default; big-data SCALE (out-of-RAM, shuffle, many sources) **and** every stage not on the lightweight tier: `sentiment*`, clustering, `surebet*`, `rag_*`, `intelligent*`/`iextract`, the full connector + ML set | distributed Spark on Kubernetes |
+| `scrapy` | ingestion only (fetch, visit, explore, join, flatSelect, extract); analytics/LLM stages are rejected | lightweight Ray job, remote Camoufox, no Spark |
+| `analytics` | relational / transform / custom Python on **small, in-RAM** data (load_*, `sql_query`, dedup, filter, select, `python_row_transform`/`python_dataframe_transform`, save_*) | in-process DuckDB + Polars |
+| `hybrid` | scrape → analyze in ONE job on small data | the scrapy segment feeds the analytics segment |
+| `temporal` | workflow orchestration (not a data engine) | Temporal |
+| `slurm` | HPC batch, only for orgs with HPC access configured | Slurm |
 
-Selection rule: scraping-only → `scrapy`; relational/Python analysis on small data → `analytics`; mixed scrape+analyze on small data → `hybrid`; big-data / ML / LLM-heavy / many-source → `spark`. `sql_query` and `python_extensions` **no longer require Spark** for entry-tier volumes — they run on `analytics`/`hybrid` too (DuckDB SQL; the Spark vs DuckDB SQL dialects are both ANSI and largely interchangeable). SCALE BOUND: analytics/hybrid are single-node/in-RAM — escalate to `spark` when the data won't fit a worker's memory.
+Rule: scraping only → `scrapy`; small relational/Python analysis → `analytics`; small scrape+analyze → `hybrid`; big data / ML / LLM-heavy / many sources → Spark. `sql_query` and `python_extensions` run on `analytics`/`hybrid` too (DuckDB SQL; Spark and DuckDB SQL are both ANSI and largely interchangeable). Escalate to Spark when the data won't fit one worker's memory.
 
-## Documents / PDF extraction — use `wget`, not the browser
+**BYOC / SaaS ephemeral VMs.** If the organization has `deployment_mode = byoc_soft` and a `byoc_soft_cloud_credential_id`, a Spark run goes automatically to **2 ephemeral Hetzner VMs** created for the run and destroyed afterwards; the caller passes no infra flags. Expect about **6 minutes of VM provisioning** before Spark starts: `executeJob_1` returns status `PROVISIONING`, which is not a hang. Lightweight engines (`scrapy`, `analytics`, `hybrid`, `temporal`, `slurm`) are not routed this way. For browser-heavy runs, `executeJob_1` also accepts per-run Camoufox VM flags: `camoufoxMode` (`IN_CLUSTER` | `EXTERNAL_VM`), `elasticBrowserVmCount`, `elasticBrowserCloudCredentialId`, `useEphemeralElasticBrowserVms`, `elasticBrowserVmLifecycle` (default `TEARDOWN_ALWAYS`; `KEEP`; `TEARDOWN_ON_JOB_SUCCESS`).
 
-Fetching a PDF (or docx/xlsx) URL is transparent: the engine auto-detects the content-type and **Tika-parses it into XHTML**, so the fetched Doc is a normal DOM — pull its text with the SAME `extract` stage, **no special PDF stage**.
+## The stage catalog is the source of truth
 
-**Always use `wget` / `wgetExplore` / `wgetJoin` (HTTP), NOT `visit*` (browser).** `wget` fetches the raw bytes → Tika → text. The browser renders the **pdf.js viewer** instead, so you'd capture the viewer chrome, not the document text. wget is also cheaper (no Camoufox) and works on the entry-tier `scrapy`/`hybrid` engines.
+Always discover stages with `listStages` (filter by `plugin_id`, `stage_name`, or `plugin_type`: `etl`, `api`, `spark_stage`, `spark_action`, `spark_resolver`, `spark_mixed`) and read one stage's arguments with `getStage`. Entries look like:
+
+```json
+{
+  "stage_name": "sentiment_analyze",
+  "plugin_id": "sentimental-plugin-etl",
+  "plugin_type": "spark_stage",
+  "aliases": [],
+  "arg_schema": [
+    { "name": "text_field", "type": "string",  "required": true },
+    { "name": "model",      "type": "string",  "required": false, "default": "default" },
+    { "name": "max_chars",  "type": "integer", "required": false, "default": "4000" }
+  ],
+  "description": "..."
+}
+```
+
+The order of `arg_schema` (or `args` in `getStage` output) IS the positional order. Use `listStages` with `plugin_type=spark_action` to see the **browser actions** usable inside `fetch`/`visit` traces; confirm any action name there before using it.
+
+## The CORE rule: args are POSITIONAL
+
+The engine's `WArgs` reads arguments **by index**, not by name. In YAML, `args:` is **always a list**; item N is the value at position N in the order of `arg_schema`. An item can be a scalar or a structured map (e.g. `iextract`'s `{selector, method}`); position is what matters.
+
+```yaml
+# CORRECT
+- stage: sentiment_analyze
+  args: ["text", "default", 4000]     # text_field, model, max_chars
+
+# WRONG: a map is passed as ONE positional value ("Map(text_field -> text, ...)"),
+# every other position falls back to its default
+- stage: sentiment_analyze
+  args: { text_field: text, model: default }
+```
+
+To set position N, fill every earlier position (use the documented default, often `""` or `0`).
+
+The exception is **browser actions** (`WActionArgs`), which are keyed by name, and only inside an `actions:` map within `args`:
+
+```yaml
+- stage: fetch
+  args:
+    - "$url"                       # position 0 = url
+    - actions:                     # position 1 = map with key "actions"
+        - action: "comment_thread_hydrate"
+          params: { max_plan_retries: 2, scroll_rounds: 10 }
+```
+
+## Pipeline anatomy: source → transform → sink
+
+Every pipeline starts with a SOURCE stage that produces rows; a transform as first step is meaningless.
+
+| Source use case | Stage |
+|----------|-------|
+| Fetch URLs (HTTP) | `wget`, `fetch` |
+| Fetch with a real browser | `visit`, `fetch` with actions |
+| Load the job's input CSV | `load_csv` with `path: "${INPUT_CSV_PATH}"` |
+| Google text search (news/opinion) | `webSearch` |
+| EAN / product / image search | `searchEngine` (requires `ean`) |
+
+The default SINK is the pipeline-level `output:` block, which writes the run's output dataset (queryable afterwards):
+
+```yaml
+output: { format: parquet, mode: overwrite, path: "${OUTPUT_PARQUET_PATH}" }
+```
+
+`${OUTPUT_PARQUET_PATH}` and `${INPUT_CSV_PATH}` (the Job's input dataset) are injected at run time. Plugin-specific sinks (`save_csv`, `save_parquet`, `db_save_example`, `pc_save_match`, ...) exist; check the catalog. **Do not use `sentiment_save`** in ETL pipelines: the run's parquet output IS the sentiment dataset, already tied to the job.
+
+## Manifest: the declarative envelope
+
+`manifestApply` takes ONE string `yaml` holding several documents separated by `---`. Documents are processed in dependency order regardless of file order: **Project → Dataset → AgenticProfile → Pipeline → Job**. Cross-document references use `ref:<name>` (numeric ids are also accepted). Re-applying is an upsert by name.
+
+| kind | Required | Notes |
+|---|---|---|
+| `Project` | `metadata.name` | optional `spec.description`; created in the caller's org |
+| `Dataset` | `metadata.name` | optional `spec.format`, `spec.datasetType`; creates **only the record, no rows** (an existing dataset with that name is reused) |
+| `AgenticProfile` | `metadata.name`, `spec` | `spec` stored verbatim; see the agentic skills |
+| `Pipeline` | `metadata.name`, **`metadata.category`**, **`spec`** | `spec` holds `pipeline:` (and `sources:`, `match:`, `output:`, `python_extensions:`, `metadata:` for the engine); `metadata.category: ref:<name>` auto-creates the category; a number there is a CATEGORY id, not a project id; optional `metadata.agentic_profile` |
+| `Job` | `metadata.name`, **`metadata.project`**, **`spec.agent`** | `spec.agent: ref:<pipeline name>`; optional `spec.input.dataset: ref:<name>` or id, `spec.description`, `spec.enabled` |
+
+Note the asymmetry: a Pipeline uses `metadata.category`, a Job uses `metadata.project`.
+
+### Complete working example: Dataset → Pipeline → Project → Job
+
+Step 1, upload the input rows (a `kind: Dataset` document alone has no data). Call `uploadDatasetJson`:
+
+```json
+{ "name": "demo-seed-urls", "dataset_type": "input", "filename": "seed.csv",
+  "content": "url\nhttps://books.toscrape.com/catalogue/page-1.html\nhttps://books.toscrape.com/catalogue/page-2.html\n" }
+```
+
+Step 2, `manifestApply` with this `yaml`:
+
+```yaml
+kind: Dataset
+metadata:
+  name: demo-seed-urls          # matches the uploaded dataset by name → reused, not recreated
+spec:
+  format: csv
+  datasetType: input
+---
+kind: Pipeline
+metadata:
+  name: demo-books-listing
+  category: ref:data_engineer   # agent category (auto-created if missing)
+spec:
+  pipeline:
+    - stage: load_csv
+      args:
+        - { path: "${INPUT_CSV_PATH}", header: "true" }
+    - stage: wget
+      args: ["$url"]
+    - stage: flatSelect
+      args:
+        - "article.product_pod"
+        - - { selector: "h3 a", method: "attr:title", as: "title" }
+          - { selector: ".price_color", method: "text", as: "price" }
+          - { selector: "h3 a", method: "href", as: "url" }
+  output: { format: parquet, mode: overwrite, path: "${OUTPUT_PARQUET_PATH}" }
+---
+kind: Project
+metadata:
+  name: demo-books
+spec:
+  description: Book listing demo
+---
+kind: Job
+metadata:
+  name: demo-books-job
+  project: ref:demo-books
+spec:
+  agent: ref:demo-books-listing
+  input:
+    dataset: ref:demo-seed-urls
+  description: Scrape the seeded listing pages
+```
+
+The response is `{dryRun, applied: [{kind, name, status, id | agentId | jobId, ...}], errors: []}`. Read the Project `id` and the Job `jobId` from `applied` (or use `getProjectFromName` + `getProjectJobs`). Always check `errors`: a document can fail while others succeed. Verify each stage's args with `getStage` before applying (the selectors above are for the example site only).
+
+Step 3, run: `executeJob_1` with `{projectId, jobId}` (add `engine` if not Spark) → returns `executionId` and status. Step 4, follow it (see "Run, monitor, read results").
+
+### `manifestValidate` (dry run) caveats
+
+- It rejects stage names not in the catalog ("unknown stage(s) not in the catalog") and malformed `python_extensions` (stages must be a MAP keyed by function name; the `python_row_transform:` / `python_dataframe_transform:` / `python_source:` prefix must match the function's `type`). The error text says "Call getCatalogStages": in this MCP use `listStages` / `getStage`.
+- It does NOT check argument shapes; that is your job via `getStage`, plus `wizardValidate_1` for a real sample run.
+- A Job that references a Project or Pipeline defined in the same manifest but not yet created reports "not found" in validate; that is expected and resolves at apply time.
+- `metadata.category: ref:<new name>` creates the category even during validate.
+
+### Faster paths without a full manifest
+
+- `saveGeneratedPipeline` (`pipeline_name`, `pipeline_yaml` = the spec content with top-level `pipeline:`/`output:`) upserts a pipeline by name; `execute: true` also runs it (`engine`, `datasetId` optional). A super_admin key has no own org and must pass `organization_id`.
+- `pipelineDraftPut` with `context: "etl:pipeline-designer"`, `pipeline_name`, `pipeline_yaml`, `note` puts the YAML in the user's Pipeline Designer draft slot in the console, for them to review before saving; `pipelineDraftGet` reads it back, `pipelineDraftDelete` clears it.
+- Existing pipelines: `getAllAgents(categoryId)` / `getResolvedPipelineYaml(agentId)`.
+
+## Run, monitor, read results
+
+1. `executeJob_1` → `executionId` (status may be `PROVISIONING` on BYOC: allow ~6 min).
+2. `waitForExecution` (`projectId`, `jobId`, `executionId`, `timeoutSec`, `logTail`) blocks server-side and returns the final state plus a log tail; or poll `getExecutionStatus_1` / `executionStatus`.
+3. On failure read `getExecutionLogs_1` (`podType` driver/executor, `tail`) and fix the pipeline: wrong arg positions, unknown column names (`UNRESOLVED_COLUMN`), empty fetches.
+4. Preview rows with `executionOutput` (`executionId`, `limit`).
+5. SQL: get the task id from `getAllTasks(projectId, jobId)`, then `queryDatasetByTask` with `taskId` and `sql: "SELECT title, price FROM {table} LIMIT 50"`; `{table}` is replaced with the task's output table (read-only SELECT over that table only). `getDatasetInfoByTask` returns the table and schema. For queries over datasets by id use `executeQuery` with the `[<datasetId>]` shortcut, e.g. `SELECT * FROM [1234] LIMIT 10`.
+6. Stop with `stopJob` or `cancelExecution_2`.
+
+## Workflow for building a pipeline
+
+1. Natural-language request → check `catalogSources` for the sources, and `suggestStages_1` (`intent`) for candidate stages.
+2. For each candidate stage call `getStage`; build `args:` as a list in `arg_schema` order; required args with no default MUST be present.
+3. For a new scraping source without a recipe, dry-run with `wizardValidate_1` and judge rows coherently (see above).
+4. Wrap in a manifest (or use `saveGeneratedPipeline`), run `manifestValidate`, then `manifestApply`.
+5. Run with `executeJob_1`, monitor, inspect output, iterate.
+
+## Choosing the crawling stage
+
+### Pagination: pick the stage by how "next" is reachable (IMPORTANT)
+
+The wrong mechanism silently returns only page 1.
+
+**A. URL-based**: `?page=N`, `?index=N`, `&start=N`, or a real `<a href>` "next". Pages are independently fetchable → `wgetExplore` / `visitExplore` (they follow the link's **absolute href**), or seed the page URLs and fetch in parallel (best on Spark).
+
+**B. Click-based**: a `<button>` "Next", "Load more", or JS instant search with no followable href → **`visitPaginate`**:
+```yaml
+- stage: visitPaginate
+  args:
+    - "https://site.com/search?q=x&index=0"   # seed url (literal or $col)
+    - "button[aria-label='Next']"             # the single "next" control
+    - 10                                       # optional page limit
+- stage: flatSelect
+  args: ["[class*='card']", [ {selector: ..., method: ..., as: ...} ]]
+```
+`visitPaginate` builds `Visit(url) +> Loop(Snapshot +> Click)` in one browser session: one Doc per page, stopping when the click fails. Sequential within a seed, parallel across seeds.
+
+Do NOT paginate by giving `explore`/`visitExplore` a bare `[click]`: each hop's trace runs alone, so the click hits an unloaded page → 60 s `TimeoutError`. To paginate inside an explore, `visitExplore` takes an `actions:` list and auto-prepends `Visit('A.href)`: `args: ["div.category a", 1, {actions: [{action: paginate, selector: "a[rel=next]"}]}]`. The `paginate` (`Loop(Snapshot+Click)`) and `loadmore` (`Loop(Click)`) action factories also work in any `fetch`/`visitJoin` trace.
+
+### HTTP vs browser
+
+- `wget` / `wgetExplore` / `wgetJoin`: static HTML, PDFs, documents. Cheap, works on `scrapy`/`hybrid`.
+- `visit` / `visitExplore` / `visitJoin` / `fetch` with actions: JS-rendered pages, catalog sources with `fetch_method: browser`, news articles (wget often returns an empty body there).
+
+### Documents / PDF extraction: use `wget`, not the browser
+
+Fetching a PDF (or docx/xlsx) URL is transparent: the engine detects the content type and **Tika-parses it into XHTML**, so you pull text with the same `extract` stage. A browser would render the pdf.js viewer instead of the document.
 
 ```yaml
 # single PDF
 - stage: wget
   args: ['<pdf-url>']
 - stage: extract
-  args: [ [ {selector: "body", method: text, as: doc_text} ] ]   # whole document text, one row
+  args: [ {selector: "body", method: text, as: doc_text} ]
 
-# an archive of PDFs (index page → many .pdf links) — all HTTP, no browser
-- stage: wgetExplore         # discover the .pdf anchors (check catalog for exact args)
+# an index page → many .pdf links, all HTTP
+- stage: wgetExplore            # check getStage for exact args
   args: ['<index-url>', 'a[href$=".pdf"]', 1]
-- stage: wgetJoin            # follow each .pdf link via HTTP → Tika → text
+- stage: wgetJoin
   args: ['a[href$=".pdf"]']
 - stage: extract
-  args: [ [ {selector: "body", method: text, as: doc_text} ] ]
+  args: [ {selector: "body", method: text, as: doc_text} ]
 ```
 
-Then process `doc_text` downstream (`sentiment` / `sql_query` / `rag_ingest` / `python_*`). Use the **browser (`visitExplore`) ONLY when the index is a JS "page picker"** (dynamic listing/pagination that won't reveal the links without JS) — and even then fetch the PDFs themselves with `wgetJoin`, never `visitJoin`. Metadata: `<head><meta>` via `method: attr:<name>` (for links use `method: href`).
+Use `visitExplore` only when the index is a JS page picker, and even then fetch the PDFs with `wgetJoin`. Metadata: `method: attr:<name>`; links: `method: href`.
+
+## `extract`, `flatSelect`, `iextract`: extraction clauses
+
+- **`extract`**: each extractor is `{selector, method, as}`. On Spark both the flat form `args: [{...}, {...}]` and the nested form `args: [[{...}, {...}]]` work (the nested list is unwrapped). Prefer the flat form; the Scrapy engine's handling of the nested form is not verified. String shorthand `"h1.text->title"` is also accepted.
+- **`flatSelect`**: `args: [<segment selector>, [ {selector, method, as}, ... ]]`: one row per matched container, field selectors relative to it.
+- Common methods: `text`, `href`, `attr:<name>`, `code` (HTML), `boilerPipe` (main article text, camelCase exact), `price`. Check the catalog for others.
+- **Article body: prefer `extract` + `method: boilerPipe` over `iextract`**: deterministic, no LLM cost: `{selector: body, method: boilerPipe, as: body}`.
+- **`iextract`** (LLM, code mode): always give a field prefix (position 2) AND `as <col>` / `(field: <col>)` names in the prompt. Without them columns can be named after the whole prompt, and downstream stages die with `UNRESOLVED_COLUMN` after the expensive crawl. Output columns are `<prefix><snake_case_key>`.
+
+```yaml
+- stage: iextract
+  args:
+    - { selector: "body", method: "code" }     # position 0
+    - "Extract from this product page: EAN code (field: ean_code), title (field: title), price as number (field: price), currency ISO code (field: currency). Empty string when not found. Preserve all input fields."
+    - "pc_"                                     # position 2 = prefix → pc_ean_code, pc_title, ...
+```
+
+CSS selector guidance: prefer stable attributes (`data-*`, `itemprop`, semantic classes like `.product-card`, `article`) over positional paths (`:nth-of-type`) and generated class hashes; scope field selectors relative to the segment container; verify on a real sample with `wizardValidate_1`.
+
+## webSearch: Google text search for news/opinion COVERAGE (sentiment)
+
+`webSearch` is the TEXT search stage (distinct from `searchEngine`, which is EAN/product/image search and requires an `ean`). It runs Google CSE for a query + variants, paginates past 10 per request, de-dupes by link, and emits ONE ROW PER RESULT (`result_link`, `result_title`, `result_snippet`, `result_source`); then fetch each `$result_link`.
+
+Coverage (a sentiment run should persist **≥50 real-body docs**):
+- `num_results: 80` (CSE cap 100); never below 60.
+- `query_variants`: **≥6 distinct angles, not synonyms** (synonyms collapse on de-dup): an interview angle, a named event/policy, a quote/clash, plus `site:<trusted domain> <entity>` for 2-3 catalogued domains.
+- `date_restrict: m6` for an entity; widen to `y1` if thin. When news is thin, add a forum source (one row per comment).
+
+Fetch news with **`visit`, not `wget`** (wget doesn't render JS → empty body). The pipeline starts from ONE seed row → a single partition → serial visits: insert **`repartition` `[8]` right after `webSearch`**.
+
+```yaml
+pipeline:
+  - stage: webSearch
+    args:
+      - { query: "<entity> opinioni", query_variants: ["<entity> intervista","<entity> <event>","<entity> <policy>","<entity> dichiarazioni","site:ansa.it <entity>","site:repubblica.it <entity>"],
+          num_results: 80, country: "it", date_restrict: "m6" }
+      - "search_results"
+  - stage: repartition
+    args: [8]
+  - stage: visit
+    args: ["$result_link"]
+  - stage: extract
+    args:
+      - { selector: "body", method: "boilerPipe", as: "text" }
+      - { selector: "meta[property='article:published_time']", method: "attr:content", as: "published_at" }
+  - stage: sentiment_analyze
+    args: ["text"]
+output: { format: parquet, mode: overwrite, path: "${OUTPUT_PARQUET_PATH}" }
+```
+
+The sentiment lane ENDS at `sentiment_analyze` → `output:` parquet. The charts read that output per job, so runs never mix. If fewer than 50 docs have body text, iterate in the same run (more angles or a forum source).
+
+### Forum thread → one row per comment → sentiment
+
+```yaml
+pipeline:
+  - stage: fetch
+    args:
+      - "https://forum.example.com/thread/12345"
+      - actions:
+          - action: "comment_thread_hydrate"       # confirm in listStages plugin_type=spark_action
+            params: { max_plan_retries: 2, scroll_rounds: 10 }
+  - stage: comment_extractor
+    args:
+      - "Identify each user comment block on this forum thread."
+      - "Extract: author username (field: author), comment text (field: text), post timestamp ISO-8601 (field: post_timestamp), permalink (field: post_url), post id (field: post_id)."
+      - "c_"                                     # → c_text, c_author, ...
+  - stage: sentiment_analyze
+    args: ["c_text", "default", 4000]
+  - stage: sentiment_filter                      # optional
+    args: ["negative", -1.0, -0.2, "", "Brand X"] # label, min_polarity, max_polarity, emotion (skip), contains_entity
+output: { format: parquet, mode: overwrite, path: "${OUTPUT_PARQUET_PATH}" }
+```
+
+When the catalog has a recipe with `detail_segment` for the forum, prefer the deterministic `flatSelect` form over `comment_extractor`.
 
 ## Bookmakers / odds extraction
 
-- **Odds are lazy-loaded** — a market must be **clicked** to reveal/expand its odds before they exist in the DOM. The fetch/visit interaction **trace MUST include those clicks** (`visit → click the market/accordion → waitForSelector the odds container`) BEFORE extraction. When setting up via the live browser, record each click as a trace action so the odds load at run time.
-- **Align the names** — emit a consistent `event` column (match/event name) and consistent per-outcome odds columns, so `oddsNormalize` / `surebetFinder` / `sql_query` can group by event+outcome. Misaligned event/odds names are the #1 cause of broken arbitrage.
-- **Default scope** — unless the user explicitly asks for more, extract ONLY the most popular market (match winner / 1X2 / moneyline), not every market — shorter, more reliable trace.
-- **Multi-source by default** — surebet/arbitrage compares odds **across** bookmakers, so build a **multi-source** pipeline (the `sources:` map — one source per bookmaker — then union + `surebetFinder`), even when the user names a single site (arbitrage needs ≥2 books). The validator only validates **one source at a time** — that's a validation limitation, NOT a reason to author a single-source pipeline; build the full multi-source pipeline anyway.
+- **Odds are lazy-loaded**: the fetch/visit trace MUST click the market/accordion and `waitForSelector` the odds container BEFORE extraction.
+- **Align names**: emit a consistent `event` column and per-outcome odds columns so `oddsNormalize` / `surebetFinder` / `sql_query` can group by event + outcome.
+- **Default scope**: only the most popular market (match winner / 1X2 / moneyline) unless asked otherwise.
+- **Multi-source by default**: arbitrage needs ≥2 books, so build a `sources:` map (one per bookmaker), then union + `surebetFinder`, even if the user names one site. The validator checks one source at a time; that is not a reason to author single-source.
 
-### `oddsSelect` — the deterministic odds extractor
-
-`oddsSelect` produces **one row per outcome per market** (all selectors are supplied up front — nothing inferred at runtime). Args (always re-check the catalog for the live schema):
-
-- **`markets`** (required, array): `[{label, sectionSelector, rowSelector, fields:[{selector, method, as}]}]`
-  - `label` → the stage-added **`market_type`** column (the market's name).
-  - `rowSelector` is **relative to** `sectionSelector`; each field's `selector` is **relative to each row**.
-- **`enabled`** (optional, array): subset of market `label`s to extract (omit = all markets) — the lever to honour the "most popular market only" default above.
-
-**Output** = the parent row's columns **+** one column per field `as` (wizard-standard names: `selection`, `odds`, `line`, `over_under`, `spread`, `player_name`) **+** `market_type`. Rows are **dropped unless `selection` and `odds` are non-empty**.
-
-**Authoring (wizard):** record the lazy-load actions (scroll / expand tabs / clicks) in the fetch trace, pick one content box per market, let the AI infer the odds structure (which selector is selection vs odds vs line), confirm, and tick the subset of markets. Runtime (Spark vs Ray) = `metadata.runtime`. Downstream: `oddsNormalize` → `surebetFinder` (group by event + outcome).
+`oddsSelect` produces one row per outcome per market (all selectors supplied up front). Args (re-check `getStage`): `markets` (required) `[{label, sectionSelector, rowSelector, fields:[{selector, method, as}]}]` (`rowSelector` relative to `sectionSelector`, fields relative to each row; `label` → `market_type` column) and optional `enabled` (subset of labels). Rows without non-empty `selection` and `odds` are dropped. `wizardInferOddsStructure_1` can infer the structure from a section's HTML.
 
 ```yaml
 - stage: fetch
   args:
   - https://<bookmaker>/event/...
-  - - {action: click, selector: '.market-accordion'}        # expand → lazy-load the odds
+  - - {action: click, selector: '.market-accordion'}
     - {action: waitForSelector, selector: '.market .outcome'}
 - stage: oddsSelect
   args:
@@ -110,305 +410,15 @@ Then process `doc_text` downstream (`sentiment` / `sql_query` / `rag_ingest` / `
       fields:
       - {selector: ".name", method: text, as: selection}
       - {selector: ".price", method: text, as: odds}
-    enabled: ["Match Winner"]                                 # most-popular only (default)
+    enabled: ["Match Winner"]
 ```
 
-## Source of truth — the public stage catalog
+## Multi-source pipelines (`sources:` + `match:`)
 
-The catalog endpoint is **public (no authentication required, read-only)** — when MCP tools aren't available or you want to double-check the live state, curl it directly:
-
-```bash
-# All stages (and browser actions that platform plugins contributed)
-curl -fsSL https://api.webrobot.eu/webrobot/api/catalog/stages
-
-# Filter by plugin
-curl -fsSL "https://api.webrobot.eu/webrobot/api/catalog/stages?plugin_id=sentimental-plugin"
-
-# Filter by stage name or alias
-curl -fsSL "https://api.webrobot.eu/webrobot/api/catalog/stages?stage_name=fetch"
-
-# Filter by type (etl / api / spark_stage / spark_action / spark_resolver / spark_mixed)
-curl -fsSL "https://api.webrobot.eu/webrobot/api/catalog/stages?plugin_type=etl"
-curl -fsSL "https://api.webrobot.eu/webrobot/api/catalog/stages?plugin_type=spark_action"
-```
-
-Every entry returns:
-
-```json
-{
-  "id": 42,
-  "plugin_id": "sentimental-plugin",
-  "plugin_type": "etl",
-  "stage_name": "sentiment_analyze",
-  "aliases": [],
-  "arg_schema": [
-    { "name": "text_field", "type": "string",  "required": true,  "description": "Field containing the text to analyze" },
-    { "name": "model",      "type": "string",  "required": false, "default": "default" },
-    { "name": "max_chars",  "type": "integer", "required": false, "default": "4000" }
-  ],
-  "description": "...",
-  "usage_guide": "- stage: sentiment_analyze\n  args:\n    - \"text\"\n    - \"default\"\n    - 4000"
-}
-```
-
-**Always** call `mcp__webrobot__list_stages` (or curl the endpoint above) to discover available stages. Use `mcp__webrobot__describe_stage` (or `?stage_name=…` filter) for the full `arg_schema` of a single stage. Treat your training-time knowledge of stage names as a hint, not a fact: partner plugins ship new stages and version existing ones independently — only the catalog reflects the live state.
-
-**Also use this for actions** (browser automation steps inside `fetch` / `fetch_browser`): query `?plugin_type=spark_action` to see every action contributed by enabled plugins. If you're tempted to invent an action name like `comment_thread_hydrate`, confirm it first — the catalog tells you whether it's available on the target platform.
-
-## The CORE rule — args are POSITIONAL
-
-The engine's `WArgs` (`eu.webrobot.plugin.sdk.WArgs`) reads arguments **by index**, not by name:
-
-```scala
-class WArgs(private val raw: Seq[Any]) {
-  def string(idx: Int, default: String): String       // <- idx, not key
-  def int(idx: Int, default: Int): Int
-  def double(idx: Int, default: Double): Double
-  def bool(idx: Int, default: Boolean): Boolean
-}
-```
-
-So in YAML, `args:` is **always a sequence (list)**. Each item is the value at index 0, 1, 2, … in the order declared by the stage's `arg_schema`. An item can itself be a scalar OR a structured map (used by stages like `iextract` for `{selector, method}` pairs); position is what matters.
+One YAML scrapes several sources: each `sources.<name>` is its own mini `pipeline:`; rows are tagged with a literal **`source`** column (the map key) and unioned; the top-level `pipeline:` runs on the union; `match:` desugars to a `sql_query GROUP BY`. **`sources:` is a MAP, not a list** (a list fails with `MismatchedInputException ... ["sources"]`). Use `match: key:` (NOT `on:`, which YAML 1.1 turns into a boolean).
 
 ```yaml
-# CORRECT — args is a LIST, each item at its position
-- stage: sentiment_analyze
-  args:
-    - "text"        # position 0  (text_field)
-    - "default"     # position 1  (model)
-    - 4000          # position 2  (max_chars)
-
-# WRONG — args is a map. The parser hands `[{}]` as a single positional value
-# whose .toString is "Map(text_field -> text, ...)" — every other index falls
-# back to its default.
-- stage: sentiment_analyze
-  args:
-    text_field: text
-    model: default
-```
-
-**Skipping optional args:** to set a value at position N, every position before N must be filled. Use the documented default (often `""` or `0`) as a placeholder.
-
-The exception is **browser actions** (`WActionArgs`) which IS keyed by name. Actions live inside the `actions:` map within an `args` list, only there:
-
-```yaml
-- stage: fetch
-  args:
-    - "$url"                                  # position 0 = url string
-    - actions:                                # position 1 = a map with key "actions"
-        - action: "comment_thread_hydrate"
-          params:
-            max_plan_retries: 2               # WActionArgs.int("max_plan_retries", …)
-            scroll_rounds: 10
-```
-
-## Pipeline anatomy — source → transform → sink
-
-Every meaningful pipeline starts with a SOURCE stage that produces rows, then transforms them, then a SINK that persists or exports. **Calling a transform stage as the first step is meaningless** — there are no rows yet.
-
-Common sources (always at the top of `pipeline:`):
-
-| Use case | Stage |
-|----------|-------|
-| Fetch one or more URLs | `fetch`, `fetch_browser`, `fetch_visit` |
-| Load CSV from S3/local | `load_csv` |
-| Load DB table | `db_load_example` (example-plugin), `sentiment_load`, custom plugin |
-| Search engine results | `searchEngine` |
-| Pre-recorded fixtures | `load_avro`, `load_xml`, etc. |
-
-Common sinks (always at the end):
-
-| Use case | Stage |
-|----------|-------|
-| Save CSV / JSON / Parquet | `save_csv`, `save_parquet` |
-| Write to plugin-specific table | `db_save_example`, `sentiment_save`, `pc_save_match` |
-| Refresh aggregates | `sentiment_refresh_aggregates` (scheduled refresh, run as a separate pipeline) |
-
-Use `list_stages?plugin_type=etl` filtering when you need to discover sinks vs sources. The `plugin_type` field in the catalog distinguishes them.
-
-## Pagination — pick the stage by how "next" is reachable (IMPORTANT)
-
-Two fundamentally different mechanisms; the wrong one silently returns only page 1.
-
-**A. URL-based** — `?page=N`, `?index=N`, `&start=N`, or a real `<a href>` "next". Pages are
-independently fetchable → `wgetExplore` / `visitExplore` (they hardcode the trace to `Visit('A.href)`
-= follow the link's **absolute href**), or seed the page URLs and fetch in **parallel** (best on Spark).
-
-**B. Click-based** — a `<button>` "Next", "Load more", or JS instant-search with **no followable href**.
-The next page exists only after a **click** on a live page → use **`visitPaginate`** (example-plugin ≥ 654):
-```yaml
-- stage: visitPaginate
-  args:
-    - "https://site.com/search?q=x&index=0"   # seed url (literal or $col)
-    - "button[aria-label='Next']"             # the single "next" control
-    - 10                                       # optional page limit (default stops at last page)
-- stage: flatSelect
-  args: ["[class*='card']", [ {selector, method, as}, … ]]
-```
-`visitPaginate` auto-builds `Visit(url) +> Paginate(next)` = `Visit +> Loop(Snapshot +> Click)`: one
-`Visit` opens the page, the `Loop` snapshots + clicks "next" **in the same browser session/task**, one
-Doc per page, stopping when the click throws (no more "next"). Sequential within a seed (a click chain),
-parallel across seeds; works on distributed Spark because the whole pagination is one self-contained trace
-on one task.
-
-**Do NOT** try click pagination with `explore`/`visitExplore` giving it a bare `[click]`: explore builds
-each hop's trace ALONE (no parent backtrace), so the click runs on an **unloaded** page → 60 s
-`TimeoutError`. `usePersistentSession` does not help (a live Playwright page can't span Spark tasks). To
-paginate *inside* an explore (follow links, then paginate each), `visitExplore` now takes an `actions:`
-list and AUTO-PREPENDS `Visit('A.href)`: `args: ["div.category a", 1, {actions: [{action: paginate,
-selector: "a[rel=next]"}]}]` → per link `Visit('A.href) +> Paginate(next)`. The `paginate`
-(`Loop(Snapshot+Click)`) and `loadmore` (`Loop(Click)`) **action factories** also work in any
-`fetch`/`visitJoin` actions trace. Mirrors the official spookystuff `ExploreClickNextPageIT`.
-
-## Workflow for building a pipeline
-
-1. If the user gives a natural-language description, call `suggest_pipeline_stages`.
-2. List candidates with `list_stages` (filter by plugin_id or stage_name).
-3. For each candidate, call `describe_stage` and read its `arg_schema`. The order of entries IS the positional order.
-4. Build `args:` as a list with values at each position, in the order declared by `arg_schema`.
-5. Required args with no default MUST be present at their position; if you skip an optional arg in the middle, fill it with the documented default.
-6. Save the YAML. Validate with `validate_manifest`.
-7. If valid, offer `apply_manifest` (deploy) or `run_pipeline` (deploy + execute).
-
-## Canonical worked example — forum scrape → sentiment
-
-This is the prototypical multi-stage workflow: fetch a forum thread, extract one row per comment, enrich each comment with sentiment, persist atomically across the sentiment_* tables.
-
-```yaml
-# Optional seed URL (the engine creates an initial dataset of one row with the URL)
-fetch:
-  url: "https://forum.example.com/thread/12345"
-
-pipeline:
-  # 1. SOURCE — load the forum page in a browser, hydrate dynamic comment tree
-  - stage: fetch
-    args:
-      - "$url"                                # position 0 = url field reference
-      - actions:                              # position 1 = map carrying the actions list
-          - action: "comment_thread_hydrate"
-            params:
-              max_plan_retries: 2
-              scroll_rounds: 10
-
-  # 2. EXTRACT one row per comment, with c_-prefixed fields (c_text, c_author, c_post_id, …)
-  - stage: comment_extractor
-    args:
-      - "Identify each user comment block on this forum thread."                     # segmentation prompt
-      - "Extract: author username (field: author), comment text (field: text), post timestamp ISO-8601 (field: post_timestamp), permalink (field: post_url), post id (field: post_id)."
-      - "c_"                                                                          # field prefix → c_text, c_author, ...
-
-  # 3. ENRICH each row with sentiment (LLM call per partition)
-  - stage: sentiment_analyze
-    args:
-      - "c_text"        # text_field — references the prefix from step 2
-      - "default"       # model alias from the platform's LLM providers
-      - 4000            # max_chars — truncate long posts before LLM call
-
-  # 4. (optional) FILTER to negative comments mentioning a specific entity
-  - stage: sentiment_filter
-    args:
-      - "negative"      # label
-      - -1.0            # min_polarity
-      - -0.2            # max_polarity
-      - ""              # dominant_emotion (skip)
-      - "Brand X"       # contains_entity (case-insensitive substring match)
-
-  # 5. SINK — persist atomically across sentiment_documents/_emotions/_entities/_aspects
-  - stage: sentiment_save
-    args:
-      - "forum"             # source_type (required)
-      - "c_text"            # text_field
-      - "c_post_timestamp"  # published_at_field
-      - "c_post_url"        # source_url_field
-      - "c_author"          # author_field
-      - "c_post_id"         # external_id_field
-```
-
-Refresh of the materialized aggregates (`sentiment_daily_overall`, `_by_entity`, `_emotions`) is a SEPARATE pipeline run on a schedule:
-
-```yaml
-pipeline:
-  - stage: sentiment_refresh_aggregates
-    args:
-      - 7    # lookback_days
-```
-
-## Other source patterns
-
-### Pattern — load from CSV
-```yaml
-pipeline:
-  - stage: load_csv
-    args:
-      - path: "s3a://bucket/products.csv"
-        header: "true"
-  - stage: sentiment_analyze
-    args: ["product_review_text", "default", 4000]
-  - stage: sentiment_save
-    args: ["review", "product_review_text", "review_timestamp", "review_url", "reviewer_id", "review_id"]
-```
-
-### Pattern — DB-driven enrichment
-```yaml
-pipeline:
-  - stage: db_load_example
-    args: ["pending_reviews", "active", 1000]   # table, status, limit
-  - stage: sentiment_analyze
-    args: ["body", "default", 4000]
-  - stage: sentiment_save
-    args: ["review", "body", "created_at", "permalink", "user_id", "id"]
-```
-
-### Pattern — price comparison discovery
-```yaml
-pipeline:
-  - stage: load_csv
-    args:
-      - path: "${INPUT_CSV_PATH}"
-        header: "true"
-  - stage: searchEngine
-    args:
-      - provider: "google"
-        query: "${ean} ${product_name} site:${competitor_site}"
-        num_results: 3
-  - stage: visit
-    args: ["$result_link"]
-  - stage: iextract
-    args:
-      - selector: "body"
-        method: "code"
-      - "Extract: EAN (pc_ean_code), title (pc_title), price (pc_price), currency (pc_currency), availability (pc_availability), image URL (pc_image_url)."
-      - "pc_"
-  - stage: pc_match_scorer
-    args: []
-  - stage: pc_image_match_stage
-    args: []
-  - stage: pc_save_match
-    args: ["ean", "result_link", "competitor_site", "match_confidence"]
-```
-
-## iextract — code-mode LLM extraction
-
-Used inside any pipeline that has visited a page to pull structured fields. **Always provide a field prefix (position 2) AND `as <col>` aliases in the prompt.** Without them the extracted columns can be named after the *whole prompt* (e.g. `Extract the article…body`) instead of a clean `body`, and any downstream stage that references the column (`sentiment`, `sql_query`, `avgSentimentByKey`, …) dies at plan time with `UNRESOLVED_COLUMN` — *after* the expensive crawl/LLM work has already run. Output columns are `<prefix><snake_case_key>`; reference them downstream by that exact name (e.g. prefix `art_` + `as body` → column `art_body` → `sentiment: [art_body]`).
-
-```yaml
-- stage: iextract
-  args:
-    - selector: "body"          # position 0 = a map { selector, method }
-      method: "code"
-    - "Extract from this e-commerce product page: EAN code (field: pc_ean_code), product title (field: pc_title), price as number without currency symbol (field: pc_price), currency ISO code (field: pc_currency), availability in_stock|out_of_stock|unknown (field: pc_availability), main image URL (field: pc_image_url). Empty string when not found. Preserve all input fields."
-    - "pc_"                     # position 2 = field prefix
-```
-
-## Multi-source cross-retailer price matching (`sources:` + `match:`) — VERIFIED 2026-06-08
-
-ONE YAML scrapes SEVERAL sources and matches the same product across them. Each `sources.<name>`
-entry is its own mini-`pipeline:`; the parser tags rows with the source name, unions them, then
-`match:` desugars to a `sql_query GROUP BY`. Use `match: key:` (NOT `on:` — YAML 1.1 coerces `on`
-to a boolean).
-
-```yaml
-metadata: { geo: gb, proxy_mode: sticky_session }     # anti-block: geo + sticky IP + retry-on-block
+metadata: { geo: gb, proxy_mode: sticky_session }   # geo + sticky IP + retry-on-block
 sources:
   viking:
     pipeline:
@@ -416,12 +426,12 @@ sources:
       - { stage: intelligentFlatSelect, args: ["the product result cards", "full product title as model_key, price with currency as price", ""] }
   staples:
     pipeline:
-      - stage: fetch                                  # SPA/Algolia site → homepage + auto search
+      - stage: fetch
         args:
           - "https://www.staples.co.uk/"
           - auto_internal_search: { query: "epson printer", prompt: "Find the search input and submit", wait_ms: 8000 }
       - { stage: intelligentFlatSelect, args: ["the product result cards", "full product title as model_key, price with currency as price", ""] }
-pipeline:                                             # COMMON tail on the union, BEFORE match
+pipeline:                                           # common tail on the union, BEFORE match
   - stage: sql_query
     args:
       - "SELECT * FROM (SELECT * EXCEPT(model_key), regexp_replace(upper(regexp_extract(model_key, '(?:ET|XP|WF|WP|SC|L|EP)[ -]?[A-Z]?[0-9]{2,6}[A-Z]{0,4}', 0)), '[^A-Z0-9]', '') AS model_key FROM df) WHERE model_key <> ''"
@@ -429,401 +439,125 @@ match: { key: model_key, collect: [model_key, price], min_sources: 1 }
 output: { format: parquet, mode: overwrite, path: "${OUTPUT_PARQUET_PATH}" }
 ```
 
-Hard-won lessons (all verified end-to-end):
-- **Match on a NORMALIZED canonical code, never the raw title** — two retailers phrase titles
-  differently, so an exact GROUP BY on the title matches NOTHING. Extract the code (regexp_extract)
-  in a top-level `pipeline:` tail that runs on the union before `match:`.
-- **`auto_internal_search: { …, wait_ms: 8000 }`** — adds a Delay before the snapshot so async/JS
-  SERPs (Algolia/Shopify) render their results; without it you snapshot an empty/homepage page.
-- **Data in `data-*` attributes**: intelligentFlatSelect extracts the ATTRIBUTE value when the
-  inferred column selector is a bare `[data-product-title]` / `[data-price]` (any `[attr]`).
-- **retry-on-block** covers `auto_internal_search` too (CF challenge / no-navigation → fresh sticky IP).
-- Demo output-preview caps display at **≤100** rows (pass `limit=100`; >100 silently resets to 10).
-  Demo total records: `WEBROBOT_DEMO_MAX_RECORDS` env (default 10). Other verticals (sure-bet,
-  real-estate arbitrage, sentiment) reuse the same `sources:` substrate with a different combine step.
+Lessons:
+- **Match on a NORMALIZED code, never the raw title** (retailers phrase titles differently).
+- `auto_internal_search: { ..., wait_ms: 8000 }` waits for async/JS result pages before the snapshot.
+- `intelligentFlatSelect` extracts the attribute value when the inferred selector is a bare `[data-attr]`.
+- Analytics verticals combine on the `source` column instead of `match:` (e.g. `sentiment` then `avgSentimentByKey` with `["source", "sentiment_score"]`).
+- Known issue (as last observed): after the `sources:` union, `transformRow` LLM stages such as `sentiment` may read empty text and return neutral defaults. Workaround: run those stages **inside each source's `pipeline:`**, before the union.
 
-**`sources:` is a MAP keyed by source name, NOT a list** (`sources: { npr: {pipeline:[…]}, cnn: {pipeline:[…]} }`). A YAML *list* (`sources: [ {source: npr, …} ]`) is rejected by the runtime parser (`MismatchedInputException … ["sources"]`). The union tags every row with a literal **`source`** column (the map key) — analytics verticals combine on it instead of `match:`. Sentiment example (crawl → article extract → per-source sentiment):
+## LLM-driven e-commerce flow: fetch + auto_internal_search → intelligentExplore → intelligentJoin → iextract
 
-```yaml
-sources:
-  npr: { pipeline: [ {stage: wget, args: ["https://text.npr.org/"]},
-                     {stage: intelligentWgetExplore, args: ["links to news articles", 1, 3]},
-                     {stage: iextract, args: ["body", "article headline as title and full text as body", "art_"]} ] }
-  cnn: { pipeline: [ {stage: wget, args: ["https://lite.cnn.com/"]},
-                     {stage: intelligentWgetExplore, args: ["links to news articles", 1, 3]},
-                     {stage: iextract, args: ["body", "article headline as title and full text as body", "art_"]} ] }
-pipeline:                                   # COMMON tail on the union
-  - { stage: sentiment, args: ["art_body"] }            # → sentiment_score, sentiment_label
-  - { stage: avgSentimentByKey, args: ["source", "sentiment_score"] }   # avg per source
-output: { format: parquet, mode: overwrite }
-```
-Pick low-anti-bot sources for demos (text-only/lite news, MediaWiki) and cap `intelligentWgetExplore` depth ≤ 1 (shared demo LLM budget).
+Use when CSS selectors are unknown or brittle.
 
-## LLM-driven e-commerce flow — fetch+auto_internal_search → intelligentExplore → intelligentJoin → iextract
-
-Use when CSS selectors are brittle, unknown, or change across categories — e.g. classic e-commerce: search the site, page through results, follow each item to its detail page, extract structured fields.
-
-### 1. Internal search is an Action, not a Stage
-
-This is the part most people get wrong. **`internalSearch` is an `Action`**, not a pipeline stage. It lives in `web.actions.InternalSearchAction` and is meant to be inserted into the **trace of a fetch stage** — never as a top-level `- stage: internalSearch` entry. (The `InternalSearchStage` class you'll find in `example-plugin` is a legacy shortcut wrapper; it's not in the canonical stage catalog.)
-
-The same is true for `IntelligentAction` (the case class in `example-plugin/IntelligentAction.scala`): it's an action that translates an NL `query` to a sub-trace at execution time via `IntelligentActionResolver`. There is **no `intelligentAction` stage**. It goes inside a fetch trace.
-
-The canonical, declarative way to combine "open page → fill search → snapshot the result page" is the `auto_internal_search` shortcut on `stage: fetch` (the NativeFetchStage). It builds the trace `Visit(url) → InternalSearchAction(query, prompt) → Snapshot()` for you (the trailing Snapshot is added by `AutoSnapshotRule` because `InternalSearchAction.outputNames` is empty).
+**Internal search is an action, not a stage.** `auto_internal_search:` on `fetch` builds `Visit(url) → InternalSearchAction(query, prompt) → Snapshot()`. There is no `internalSearch` or `intelligentAction` stage, and `internalSearch` is NOT a registered action factory: `- action: internalSearch` in a manual trace fails the whole pipeline ("ActionFactory 'internalSearch' not found"). For a manual trace use registry actions (`input`, `click`, `waitforselector`, `wait`, `scroll`, ...):
 
 ```yaml
 - stage: fetch
   args:
     - "https://shop.example.com/"
-    - auto_internal_search:
-        query: "pikachu"                                       # literal — or "$some_column" for a row field
-        prompt: "Find the product search input in the site header and submit"
+    - - { action: input, args: ["input[type=search]", "pikachu"] }
+      - { action: click, args: ["button[type=submit]"] }
+      - { action: waitforselector, args: [".results .product-card"] }
 ```
 
-If you need full control of the trace (multiple actions, custom ordering), use the explicit form:
+`wget` upstream of a search action fails with "No current page available" (no live DOM).
 
-⚠️ **VERIFIED 2026-06-07 against the deployed jar: `internalSearch` is NOT a registered `ActionFactory`.** A manual `- action: internalSearch` in a trace throws `ActionFactory 'internalSearch' not found` and **fails the whole pipeline**. It's reachable ONLY via the `auto_internal_search:` shortcut (NativeFetchStage instantiates `InternalSearchAction` directly, bypassing the registry). For a manual trace use registry actions only (`input`, `click`, `waitforselector`, `wait`, `scroll`, …):
-
-```yaml
-- stage: fetch
-  args:
-    - "https://shop.example.com/"
-    -
-      - action: input              # registry action ✓
-        args: ["input[type=search]", "pikachu"]
-      - action: click
-        args: ["button[type=submit]"]
-      - action: waitforselector
-        args: [".results .product-card"]
-```
-
-For a search box you don't want to hand-target, just use `auto_internal_search:` (it infers input + submit via LLM).
-
-Failure mode if you use `- stage: internalSearch` directly with `wget` upstream: `"No current page available"` — Snapshot needs a live browser DOM, which `wget` can't produce.
-
-### 2. `intelligentExplore` — auto-detect pagination
-
-Backed by `InferNavigationSelectorStage` (also exposed as `inferNavigationSelector` / `inferNavSelector` when used in the new split form). Materializes the dataset, picks the row whose `docs.lastOption` URI looks like a results page (heuristic: contains `?`, `#`, `/search`, `/sch/`, `_nkw`), runs `LLMSelectorInference.inferNavigationSelector` on that page's HTML, and uses the detected selector to walk pagination.
-
-```yaml
-- stage: intelligentExplore
-  args:
-    - "next page link"     # NL prompt — the LLM resolves it against the SERP DOM
-    - 2                    # max hop depth (each hop = one "next page" follow)
-```
-
-The "preferred row" heuristic is what makes the chain order critical: if `intelligentExplore` runs before `internalSearch` has navigated, the heuristic falls back to the homepage doc and the LLM ends up inferring footer/menu links instead of pagination.
-
-### 3. `intelligentJoin` — segment SERP rows + follow each item
-
-Backed by `InferJoinSelectorStage`. Same SERP-detection heuristic. `LLMSelectorInference.inferJoinSelector` produces a CSS selector for item-detail links; the stage post-processes the result to ensure it targets `<a>` (appends ` a` if the LLM returned a card container).
-
-```yaml
-- stage: intelligentJoin
-  args:
-    - "product detail link"   # NL prompt for the item links in each SERP row
-    - "none"                  # action prompt: usually "none"; use e.g. "click product link" for tab/button flows (sets useClick=true → no `a` suffix)
-    - 10                      # cap on items joined per SERP row
-```
-
-### 4. `iextract` on each item page
-
-Same as the section above, but applied per item page. Either short form (one prompt with `as <col>` aliases) or `{selector, method: "code"}` body form for sub-tree scoping.
-
-### Canonical composite shape
+- **`intelligentExplore`** `["next page link", <max hops>]`: picks the row whose URL looks like a results page and lets the LLM infer the pagination selector. Run it AFTER the search fetch, or it infers footer/menu links from the homepage.
+- **`intelligentJoin`** `["product detail link", "none", <max items>]`: infers the item-link selector and follows each (2nd arg is an action prompt, e.g. "click product link" for tab/button flows).
+- Split form: `inferNavigationSelector` / `inferJoinSelector` / `inferSelector` write `_nav_selector` / `_join_selector` / `_inferred_selector` columns for downstream `$`-references.
 
 ```yaml
 pipeline:
-  - stage: fetch                                # NativeFetchStage = Visit + actions + AutoSnapshot
+  - stage: fetch
     args:
       - "https://shop.example.com/"
-      - auto_internal_search:
-          query: "pikachu"
-          prompt: "Find the product search input in the site header and submit"
-
+      - auto_internal_search: { query: "pikachu", prompt: "Find the product search input in the site header and submit" }
   - stage: intelligentExplore
     args: ["next page link", 2]
-
   - stage: intelligentJoin
     args: ["product detail link", "none", 10]
-
   - stage: iextract
     args:
       - "product name as name, price (with currency) as price, stock status as stock, image URL as image_url"
       - "prod_"
-
-output:
-  format: parquet
-  mode: overwrite
-  path: "${OUTPUT_PARQUET_PATH}"
+output: { format: parquet, mode: overwrite, path: "${OUTPUT_PARQUET_PATH}" }
 ```
 
-**Common pitfalls**:
+Cost ladder: `auto_internal_search` (LLM resolves selectors only) and `intelligentExplore`/`intelligentJoin` (one selector each) are cheap; `browser_use` is a full agent and costly.
 
-- Using `- stage: internalSearch` as if it were a pipeline stage. It isn't a canonical stage — put the action in the fetch trace (`auto_internal_search:` shortcut, or explicit `actions:` list).
-- Same applies to `IntelligentAction`: there is no `intelligentAction` stage — `action: intelligent, query: "…"` goes inside a fetch trace; or use `intelligent_join` (which accepts an `actionPrompt` as 2nd arg) when you want "act then follow N links" in one step.
-- Running `intelligentExplore` / `intelligentJoin` before the SERP-producing fetch → wrong selectors inferred (the row preference heuristic doesn't see a navigated page).
-- `iextract` prompt without `as <col>` aliases → no column names to bind; rephrase as `field desc as col_name, …`.
-- **Article body extraction: prefer `extract` + `method: boilerPipe` over `iextract`.** `boilerPipe` (core `de.l3s.boilerpipe.ArticleExtractor`, exposed as a dynamic-dispatch method, camelCase EXACT) pulls the main article text DETERMINISTICALLY — no LLM, no token cost, instant (vs `iextract` which burns the shared LLM budget per page). Use it for news/article → sentiment/RAG pipelines: `- {stage: extract, args: [{selector: body, method: boilerPipe, as: body}]}`.
-- **`extract` extractor args are FLAT, not nested.** Each `{selector, method, as}` map is a DIRECT element of `args` — `args: [{selector: …, method: …, as: …}, …]`. Wrapping them in an extra list (`args: [[ {…} ]]`) → `WARN NativeStages: [extract] Unrecognised extractor arg: List(Map(…)) – ignored` → the column is SILENTLY dropped (and any downstream stage referencing it sees empty/neutral).
-- **Multi-source (`sources:`) + downstream `transformRow` LLM stages (e.g. `sentiment`) is BROKEN.** After the `sources:` desugaring (per-source `sql_query` source-tag + `union`), `transformRow` stages can't read columns via `row.get(Field(name))` → they get EMPTY text → silent default (sentiment → 0.0/NEUTRAL, entities ""). The column IS in the DataFrame (shows in output) but the spooky row accessor misses it post-union. Single-source works fine. WORKAROUND until fixed: run `sentiment`/analytic transformRow stages **inside each source's `pipeline:`** (before the tag+union), then union; or apply sentiment in a single-source pipeline.
+## `browser_use`: agentic stage on a Chromium BaaS (Steel.dev)
 
-There's also a **split form** for these stages — `inferNavigationSelector` / `inferJoinSelector` / `inferSelector` produce `_nav_selector` / `_join_selector` / `_inferred_selector` literal fields that downstream native stages consume with `$_nav_selector` references. Use the split form when you want the inferred selector to be observable in the row schema or to be reused by multiple downstream stages. The combined `intelligentExplore`/`intelligentJoin` form is simpler when each inference feeds exactly one consumer.
-
-## `browser_use` — agentic stage backed by Steel.dev
-
-For scenarios where the LLM-resolved actions / `auto_internal_search` aren't enough (multi-step flows: dismiss a cookie banner → log in → navigate categories → search → wait for SPA reload), the example-plugin exposes a `browser_use` stage that runs a `browser-use` Python agent on a Steel.dev session via the script `webrobot-etl/scripts/bookmaker_intelligent_nav_steel_dev.py`.
-
-### How it works
-
-1. The stage spawns the Python script with `--prompt` and `--url`.
-2. The browser-use agent (LLM-driven) executes the prompt against a Steel.dev browser session — accepts cookies, fills forms, navigates, waits for AJAX, scrolls, anything the prompt describes.
-3. The script prints `STEEL_SESSION_WS_URL=wss://…` to stdout right before terminating.
-4. The Scala stage parses that URL out of stdout and emits ONE row:
-   `{ steel_session_ws_url, url, prompt }`.
-5. A downstream `stage: fetch` with `args: ["$steel_session_ws_url"]` **attaches to the existing Steel session** (no new browser open, no re-navigate). The page is already where the agent left it. From there `intelligentFlatSelect` / `iextract` / `extract` work as usual.
-
-### Supported backends — Chromium-based BaaS only
-
-`browser_use` works with **Steel.dev** today, and is compatible with **any other Chromium-based browser-as-a-service** that exposes a CDP WebSocket — e.g. Browserbase, Anchor Browser, Hyperbrowser, BrowserCloud, Anchor, Lightpanda, headless-Chrome CDP endpoints. Swapping backend means pointing the script at a different `wss://…` connect URL; the rest of the chain (Visit → InternalSearchAction → Snapshot → downstream stages) is identical.
-
-> **Firefox / Camoufox is NOT supported, and not as a missing-config issue.** The upstream `browser-use` library (PyPI `browser-use` 0.12.x) is explicitly Chromium-only:
->
-> - Hard dependency on `cdp-use` (CDP-only client).
-> - `BrowserChannel` enum has only `CHROMIUM`; `firefox_user_prefs` is commented out in `profile.py`.
-> - Docstring on `BrowserSession._cdp_connect`: *"Connect to a remote chromium-based browser via CDP using cdp-use."*
-> - The official ["Real Browser" doc](https://docs.browser-use.com/customize/browser/real-browser) covers only Chrome.
-> - Issue [browser-use/browser-use#850 "Executing Agent with Firefox"](https://github.com/browser-use/browser-use/issues/850) was closed by the maintainers as **NOT PLANNED**; discussions [#797](https://github.com/browser-use/browser-use/discussions/797) and [#859](https://github.com/browser-use/browser-use/discussions/859) have no maintainer answer with a working Firefox path.
->
-> The cluster's internal **Camoufox** pods (Firefox + Playwright server, `pw.firefox.connect(ws_url)`) therefore CAN'T host the `browser_use` agent. For tasks that fit Camoufox, use the cheaper, non-agentic chain instead: `stage: fetch` with the `auto_internal_search:` shortcut, plus `intelligentExplore` / `intelligentJoin` / `iextract`. Those run on the WebRobot ETL browser backend, which already supports Camoufox.
-
-### Args + config
-
-```yaml
-- stage: browser_use
-  args:
-    - "<natural-language prompt for the browser agent>"   # required — literal or "$col"
-    - "https://example.com/landing"                       # required — literal or "$col"
-    - "$existing_session_url"                              # optional 3rd arg: attach to a Steel session left open by a previous browser_use stage
-  config:
-    timeout_sec: 180                                       # subprocess timeout (default 90s — bump for multi-step prompts)
-    cwd: ${WEBROBOT_ETL_DIR}                               # required — directory that contains scripts/ and .venv-browser-use/
-    python_path: ".venv-browser-use/bin/python"            # default
-    script: "scripts/bookmaker_intelligent_nav_steel_dev.py"  # default
-```
-
-The runtime env must have `STEEL_DEV_API_KEY` plus an LLM key the agent can use (`TOGETHERAI_API_KEY`, `OPENAI_API_KEY`, ...). `WEBROBOT_ETL_DIR` should be exported in the Spark driver environment so the stage finds the script and the python venv.
-
-### Variants (also from example-plugin)
-
-- `browser_use_loop` — N prompts in the same Steel session, optionally fed from a previous stage's column. Useful for "discover tabs then iterate clicks one per row" flows.
-- `browser_use_forum_lazy_load` — purpose-built for forums / comment threads with lazy-load: discover the load-more selector + replay it until the thread is fully expanded.
-- `browser_use_forum_lazy_load_extended` — same as above plus mechanical retry rounds + intelligentFlatSelect on the snapshotted HTML.
-
-### Canonical pattern: agentic navigation → cheap extraction
+For genuinely agentic navigation (cookie banners, multi-step dynamic UI, country gates) the example plugin's `browser_use` stage runs a `browser-use` Python agent on a Steel.dev session and emits one row `{steel_session_ws_url, url, prompt}`; a downstream `fetch` with `["$steel_session_ws_url"]` attaches to that session and normal extraction follows. It works only with Chromium/CDP backends (Steel.dev, Browserbase, Hyperbrowser, ...); **Camoufox/Firefox is not supported** by the upstream library. Requires `STEEL_DEV_API_KEY` and an LLM key in the runtime env.
 
 ```yaml
 pipeline:
   - stage: browser_use
     args:
-      - "Open the site, dismiss any cookie banner, submit the search form with the term 'pikachu', wait for the results page to load, respond with done."
+      - "Open the site, dismiss any cookie banner, search 'pikachu', wait for results, respond with done."
       - "https://scrapeme.live/shop/"
-    config:
-      timeout_sec: 180
-      cwd: ${WEBROBOT_ETL_DIR}
-
+    config: { timeout_sec: 180, cwd: ${WEBROBOT_ETL_DIR} }
   - stage: fetch
-    args: ["$steel_session_ws_url"]   # attaches to the running Steel session (no navigate)
-
+    args: ["$steel_session_ws_url"]
   - stage: intelligentFlatSelect
-    args:
-      - "the product cards in the search results grid"
-      - "product name as name, price with currency as price, stock as stock, image URL as image_url"
-      - ""
+    args: ["the product cards in the search results grid", "product name as name, price with currency as price", ""]
 ```
 
-### When to pick `browser_use` vs the cheaper LLM stages
+Variants: `browser_use_loop`, `browser_use_forum_lazy_load`, `browser_use_forum_lazy_load_extended`. Do not log in to gated sites with it (see Compliance).
 
-- `auto_internal_search` (NativeFetchStage shortcut) — deterministic Visit + InternalSearchAction + Snapshot, LLM only resolves selectors. Cheap, fast, no Steel.dev round-trip. Use when the navigation is a known shape (fill one form, submit).
-- `intelligentExplore` / `intelligentJoin` — LLM only infers a single selector (pagination, item link), and the pipeline drives navigation. Cheap.
-- `browser_use` — full browser-use agent. Costs an LLM call per step + Steel.dev minutes. Use only when the navigation is genuinely agentic (multi-step, dynamic UI, captcha, country gates, login flows).
-
-## Python Extensions — inline custom logic
-
-For row-level transforms that don't justify a Scala plugin:
+## Python extensions: inline custom logic
 
 ```yaml
 pipeline:
   - stage: load_csv
-    args: [{path: "s3a://bucket/data.csv", header: "true"}]
+    args: [{path: "${INPUT_CSV_PATH}", header: "true"}]
   - stage: python_row_transform:my_transform
     args: []
-
 python_extensions:
-  stages:
+  stages:                      # a MAP keyed by function name, never a list
     my_transform:
-      type: row_transform
+      type: row_transform      # prefix must match: python_row_transform / python_dataframe_transform / python_source
       function: |
         def my_transform(row):
             return {**row, 'new_field': row.get('existing_field', '').upper()}
 ```
 
-See `/webrobot-python-extension` for full registration modes.
+See `/webrobot-python-extension` for registration modes.
 
-## Validation before run
+## Interactive pipeline designer (wizard) endpoints
 
-1. **Stage-name validation** (no Spark needed) —
-   `webrobot-project/scripts/test-plugin-loading.sh --workflow path/to.yaml`
-   confirms every `stage:` reference matches a stage actually registered by
-   the loaded plugin JARs via ServiceLoader. Useful for catching typos and
-   unknown plugin stages before submission.
-2. **Manifest validation** —
-   `mcp__webrobot__validate_manifest` runs the engine's parser against the
-   YAML and flags invalid arg shapes, missing required positions, type
-   mismatches.
+The console's Pipeline Designer drives a server-side Camoufox tab, records actions as a trace, and infers selectors with PTA + LLM. Authenticated callers MUST use the **tenant mirrors** under `/webrobot/api/tenant/wizard/...` (tools ending in `_1`). The `/webrobot/api/demo/wizard/...` paths belong to the public demo and run on the demo organization's credentials; do not use them for a customer's work.
 
-Always run validation before `mcp__webrobot__run_pipeline`.
-
-## Interactive pipeline designer — the demo wizard
-
-A self-service browser UI that lets developers and system integrators
-**build a `pipeline_yaml` interactively** by driving a real browser,
-recording the navigation as a `trace:`, and inferring CSS selectors
-with PTA + LLM. Runs as a public, unauthenticated wizard against the
-demo organization's credentials; the same REST endpoints can be wired
-into custom integrators' UIs (BYOC: caller passes their own
-`organizationId` and the backend pulls that org's LLM key from
-`cloud_credentials`).
-
-The full UX lives in the Vue 3 component `DemoApp.vue` in the public
-VitePress portal (`portal.webrobot.eu`); the REST surface is exposed
-by `DemoPlugin` under `@Path("/webrobot/api/demo")`.
-
-### Picker modes
-
-| Mode | What the user does | Output (postMessage to parent) |
+| Tool | Endpoint | Purpose |
 |---|---|---|
-| `selector-single` | Click ONE element → get a specific CSS path (`div.x > a:nth-of-type(2)`) | `webrobot-pick-selector` |
-| `selector-list` | Click ONE element → CSS path WITHOUT `:nth-of-type`, generalises to siblings | same |
-| `multi-sample` ("📍 Repeating") | Click 2+ examples of a repeating link/card → algorithm intersects tag+class paths and walks the longest common right-suffix until a selector matches all seeds via `querySelectorAll`. Used for `intelligentExplore` / `wgetExplore` / `visitExplore` link selectors. | `webrobot-pick-multi-sample` with selector + match count |
-| `multi-field` | Click each field on a card → adds rows to `extract` / `flatSelect` `_fields` | `webrobot-pick-multi-field` per click |
-| `action-record` | Navigate the page interactively (type, click, scroll). Actions stage locally and are sent in batches | `webrobot-pick-actions` (committed list) |
-| `ai-magic` | Describe in natural language, LLM returns candidate selectors with confidence | colored highlights + cards |
+| `cmfOpen_1` (`url`, `country`, `geo`) | `POST /tenant/wizard/cmf/open` | open a Camoufox tab → `{session_id, current_url, html}` |
+| `cmfStep_1` (`session_id`, `actions`) | `POST /tenant/wizard/cmf/step` | replay actions (`Click`, `Type`, `Wait`, `WaitFor`, `Scroll`, `Back`) → new HTML |
+| `cmfStatus_1`, `cmfResume_1`, `cmfClose_1` (`sessionId`) | `/tenant/wizard/cmf/{sessionId}` | status / resume a parked session / release (idle TTL ~5 min) |
+| `wizardProxy_1` (`url`, `strategy`) | `GET /tenant/wizard/proxy` | static snapshot fetch, no live session |
+| `wizardInferSegment_1` (`url`, `segmentation_prompt`, `html`) | `POST /tenant/wizard/infer-segment` | PTA + LLM repeating-container selector for `flatSelect` |
+| `wizardInferFields_1` (`url`, `intent`, `container_selector`, `stage_name`, `html`) | `POST /tenant/wizard/infer-fields` | `{selector, as, method}` list |
+| `wizardInferSelector_1`, `wizardInferBodySelector_1` | `POST /tenant/wizard/infer-selector`, `/infer-body-selector` | one selector from an intent / the article body |
+| `wizardInferActions_1` (`url`, `intent`, `stage_name`) | `POST /tenant/wizard/infer-actions` | click/type/wait trace for an intent |
+| `wizardConsolidateSelectors_1`, `wizardRelaxSelectors_1`, `wizardSuggestFieldNames_1` | `POST /tenant/wizard/...` | harden / generalize selectors, name fields |
+| `wizardInferOddsStructure_1` | `POST /tenant/wizard/infer-odds-structure` | odds market structure for `oddsSelect` |
+| `wizardValidate_1` (`yaml`, `session_id`, `include_snapshot`) | `POST /tenant/wizard/validate` | sample run of a pipeline → record count + rows |
+| `selectorCacheGet_1` / `selectorCachePut_1` | `/tenant/selector-cache` | reuse / store inferred selectors |
 
-### Camoufox mirror strategy (`pickerStrategy = 'cmf'`)
+Treat `session_id` as opaque (it encodes the owning pod; round-trip it as returned). LLM steps use the caller org's own LLM credentials (`cloud_credentials`), not pod-wide keys. PTA segment inference ranks repeating-wrapper candidates algorithmically (majority tag, semantic class names, `data-testid` groups, forum post wrappers, comment-row patterns) and lets an LLM pick one.
 
-The iframe renders an HTML **snapshot** from a server-side Camoufox tab
-(`/wizard/cmf/open`). Every click/type fires `/wizard/cmf/step` which
-replays on Camoufox, then returns the post-action HTML to refresh the
-iframe. **It's a mirror, not a real browser** — expect a 3–10s delay
-per round-trip on JS-heavy sites. The wizard shows a loading overlay
-during each step plus an address-bar row with the current URL and a
-Back button (server-side `page.goBack()`).
-
-The wizard runs in **stage-and-commit** mode:
-
-1. Clicks/types stage *locally* into `pickerActions` (iframe doesn't navigate yet).
-2. The user composes a sequence (type a query, click submit) and presses **▶ Send**.
-3. The whole batch goes in ONE `/cmf/step` call — Camoufox replays, the iframe refreshes once, and actions move from `pickerActions` (staged) to `committedActions` (replayed).
-4. Only AFTER commit does the green "Apply trace to" panel appear with a stage-target dropdown filtered to `{fetch, explore, join}` — those are the stages whose YAML accepts a `trace:` block. `visit` is NOT a separate target: it's syntactic sugar for `fetch` whose trace starts with the `Visit` action.
-
-Auto-send shortcut: clicking a non-editable target (link, button, submit) commits the queue immediately — no need for explicit ▶ Send when navigating.
-
-### Trace pause + resume across stages
-
-"💾 Save trace & keep session for next stage →" stashes the live
-Camoufox session instead of releasing it. When the user opens the
-picker again on the next stage, a blue resume banner rebinds the
-iframe to the parked tab without a fresh `/cmf/open` — same URL,
-cookies, history. Server-side TTL is 5 min idle.
-
-### REST endpoints (for custom integrators)
-
-All under `/webrobot/api/demo/wizard/` on the Jersey API. Public /
-anonymous on the demo plugin; custom integrators that want to drive
-this from their own UI can call the same endpoints from any HTTP
-client.
-
-| Endpoint | Purpose | Body / Returns |
-|---|---|---|
-| `POST /cmf/open` | Spawn a Camoufox tab, navigate to URL, return rendered HTML | `{url}` → `{session_id, current_url, html}` |
-| `POST /cmf/step` | Replay one or more actions on a session | `{session_id, actions: [{type, selector, text, ms}]}` → `{session_id, current_url, html}` |
-| `DELETE /cmf/{sessionId}` | Release the tab early (otherwise reaped at 5 min idle) | `{session_id, closed: bool}` |
-| `POST /wizard/infer-segment` | PTA + LLM segment-selector inference (for `flatSelect` containers) | `{url, segmentation_prompt}` → `{segment_selector, raw_pta, llm_provider}` |
-| `POST /wizard/infer-fields` | LLM extracts a list of `{selector, as, method}` for an `extract` / `flatSelect` row | `{url, intent, container_selector?, stage_name}` → `{algo, llm, raw_llm}` |
-| `POST /wizard/infer-selector` | LLM picks one CSS selector from a NL intent | similar |
-| `POST /wizard/infer-actions` | LLM proposes a Click/Type/Wait action trace for a NL intent | similar |
-| `GET /wizard/proxy?url=...` | Static-snapshot fetch (wget strategy, no live session) | rewritten HTML with `picker.js` injected |
-
-Action types accepted by `/cmf/step`: `Click`, `Type`, `Wait`, `WaitFor`, `Scroll`, `Back`. The server runs each through a **resilient click ladder** (strict 3s → force 3s → JS `el.click()`) and serialises per-session operations so concurrent batches don't poison the Playwright driver.
-
-### Session identity is encoded in `session_id`
-
-`session_id` has the shape `<pod-ip>::<uuid>` (e.g. `10.42.5.123::a9f5...`). With >1 Jersey replica, `/cmf/step` and `/cmf/{id}` DELETE on the "wrong" pod automatically HTTP-proxy to the owner pod. Legacy bare-UUID ids still work and are treated as local-only. **Custom integrators can ignore the encoding entirely** — just round-trip whatever the open endpoint returned.
-
-### PTA segment inference
-
-`POST /wizard/infer-segment` shells out to `pta_flat_segment_infer.py`
-(under `webrobot-etl/scripts/` on the running pod, packaged into the
-Jersey image at `/opt/webrobot-etl/scripts/`). The script runs **PTA
-L1** — 6 algorithmic strategies for repeating-wrapper detection:
-
-1. **Majority-tag BFS** — parents whose ≥ 60% of direct children share the same tag
-2. **Semantic class attributes** — class names containing hints like `item`, `product`, `card`, `row`, `cell`
-3. **`data-testid` groups** — parents whose children share `data-testid`
-4. **Postbit / forum wrapper** — legacy forum-row pattern
-5. **QuantConnect discussion-thread** — niche, often disabled
-6. **`data-test-comment-date` row groups** — generic comment-row pattern
-
-Top-K candidates are scored (DOM coverage, semantic class names, content richness, link density) and handed to an **LLM picker** that chooses one. If the LLM returns nothing usable, a fallback generic-CSS pass on the full DOM is tried with `BeautifulSoup.select` validation (between configurable min/max matches).
-
-Same Python script powers the production `POST /webrobot/api/extract/direct` endpoint (admin-scoped, BYOC org).
-
-### LLM credential resolution (BYOC, no pod-wide env)
-
-The wizard's LLM-driven steps (segment picker, field inference,
-selector AI Magic, action AI Magic) do **not** read API keys from pod
-env. Both endpoints resolve via the same `LlmCredentialResolver`:
-
-- `/wizard/infer-segment` uses the demo-pipelines org id
-- `DirectExtractionApiV10` requires `body.organizationId` (caller passes it)
-
-The resolver walks `GROQ → OPENAI → ANTHROPIC → TOGETHERAI` in preference order and returns an env-vars map (e.g. `{GROQ_API_KEY: "gsk_..."}`) that gets injected into the Python subprocess via `ProcessBuilder.environment()`. **Integrators that want to use PTA / LLM endpoints just need to seed a `cloud_credentials` row for their org** — no K8s secret juggling required.
-
-### Output: the `trace:` YAML format
-
-The wizard's committed actions are serialised to YAML and accepted by
-the runtime stages `{fetch, explore, join}`. The format:
-
-```yaml
-- stage: fetch
-  args:
-    - "https://www.ebay.com/"     # url (auto-seeded by the wizard from /cmf/open URL when empty)
-  trace:
-    - Type("#gh-ac", "notebook")
-    - Click("#gh-search-btn")
-    - Wait(1000)
-    - Scroll(0)
-```
-
-Supported in the YAML: `Click("sel")`, `Type("sel", "text")`, `Wait(ms)`, `Scroll(y)`. Plus the special `Visit` first-action that switches `fetch` from HTTP to browser mode. The wizard's `Back` action is modal-only — it doesn't appear in the committed YAML.
-
-### When to use the wizard vs. write YAML by hand
-
-- **Wizard**: target site is JS-heavy, has anti-bot, or requires multi-step navigation (search form → filter clicks → infinite-scroll loads) AND the selectors aren't obvious from page source. The browser-driven mirror lets integrators see exactly what the runtime will see, and PTA + AI Magic produce starting selectors they only refine.
-- **Hand-written YAML**: target is a stable, well-known API or simple HTML page where the selectors are already known. Faster, no LLM round-trips.
-- **Hybrid**: open the wizard to record the `trace:` of an `auto_internal_search` flow on a JS-heavy storefront, then hand-edit the downstream `intelligentExplore` / `iextract` stages.
+Recorded actions go into `fetch` (and explore/join) traces as an actions list, as in the examples above. Use the wizard when the site is JS-heavy or needs multi-step navigation and selectors aren't obvious; write YAML by hand for stable pages with known selectors.
 
 ## Rules of thumb
 
-- **Never invent stage names.** If `list_stages` doesn't show it, it doesn't exist.
-- **Never use a transform as a source.** Pipelines always start with a stage that produces rows.
-- **Never use a map for `args`.** Always a list. Use maps only for compound values at a specific position (like `iextract`'s first arg) or as the last arg for stage `config`.
-- **Always validate before run.** Two layers: ServiceLoader-only stage-name check, then full manifest validation.
-- **For partner plugins:** the catalog is the truth. The plugin author updates `manifest.json` `stages[].arg_schema` when args change; that propagates to the catalog automatically on plugin reload.
+- **Never invent stage or action names.** If `listStages` / `getStage` doesn't show it, it doesn't exist.
+- **Never start with a transform.** First stage produces rows.
+- **Never use a map for `args`.** Always a list; maps only as a value at a position (or a trailing `config`).
+- **Always dry-run before running**: `manifestValidate` for names/structure, `wizardValidate_1` for real rows on scraping sources.
+- **Check `errors` in every manifest response** and the final execution state before reporting success; show the user a few real output rows.
+- Partner plugins: the catalog is the truth; it updates when the plugin is reloaded.
 
 ## On $ARGUMENTS
 
-- If the user passed a YAML path: read it, validate it, and offer to fix or run.
-- If the user passed a description: call `suggest_pipeline_stages`, then build, validate, run.
-- If the user is unclear: ask whether the data origin is a URL/CSV/DB/search, then pick the right SOURCE stage as the first step.
+- A YAML path: read it, validate it (`manifestValidate`), offer to fix, apply, or run.
+- A description: check `catalogSources`, call `suggestStages_1`, read each stage with `getStage`, build, validate, apply, run, and show results.
+- Unclear: ask whether the data origin is URLs, a CSV, or a search, then pick the right SOURCE stage.

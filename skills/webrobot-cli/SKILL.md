@@ -10,12 +10,12 @@ allowed-tools: Bash(webrobot *) Read Write Edit
 
 You drive the `webrobot` CLI on the user's behalf. The CLI is a Java JAR (Java 17+) at `~/.local/bin/webrobot` (or wherever the user installed it). Every command is documented via `webrobot --help` and `webrobot <group> --help`.
 
-## When to use the CLI vs MCP tools vs `api_call`
+## When to use the CLI vs MCP tools vs REST
 
 | Need | Tool | Reason |
 |------|------|--------|
-| Conversational ad-hoc query | `mcp__webrobot__*` (curated tool) | Typed, returns structured JSON inline |
-| Fallback for un-wrapped endpoint | `mcp__webrobot__api_call` | Generic, same auth as MCP |
+| Conversational ad-hoc query | the `webrobot` MCP tools (operationIds, e.g. `getAllProjects`, `executeJob_1`) | Typed, returns structured JSON inline |
+| Endpoint without an MCP tool (vertical apps, tenant chat) | `curl https://api.webrobot.eu/api/webrobot/api/...` with `X-API-Key` | Same key as the MCP |
 | Batch / shell-driven flow | `webrobot <group> <subcommand>` | Pipes, glob, error-code-aware shell scripts |
 | Pipeline manifest deploy + execute | `webrobot pipeline run -f x.yaml --follow` | Streams logs back to terminal, exit code = job result |
 | Plugin JAR install on user machine | `webrobot cli plugins install <coords>` | The user's local plugin folder is `~/.webrobot/plugins/` |
@@ -122,8 +122,8 @@ webrobot python-ext delete -a <agentId> --name parse_price
 
 ```bash
 # Public, no auth required
-curl -fsSL https://api.webrobot.eu/webrobot/api/catalog/stages
-curl -fsSL "https://api.webrobot.eu/webrobot/api/catalog/stages?plugin_id=sentimental-plugin"
+curl -fsSL https://api.webrobot.eu/api/webrobot/api/catalog/stages
+curl -fsSL "https://api.webrobot.eu/api/webrobot/api/catalog/stages?plugin_id=sentimental-plugin"
 ```
 
 The CLI's stage catalog uses this exact endpoint with a 1-hour disk cache at `~/.webrobot/stage-cache.json`. To force-refresh: delete the cache file or run any `pipeline apply` (writes a fresh fetch on each apply).
@@ -149,11 +149,12 @@ done
 
 ## Rules of thumb
 
-- **Always verify auth first** when commands fail with 401: `webrobot auth me` (or call `auth_check` MCP tool).
+- **Always verify auth first** when commands fail with 401: `webrobot auth me` (or call the `getCurrentUser` MCP tool).
 - **Always run `--help`** before assuming a command's options. The skill is a map; `--help` is the truth.
 - **Prefer `pipeline run --follow`** for one-shot batch jobs — it deploys + executes + streams in one call.
 - **Use `--output json`** when the user asks for machine-readable output or you need to pipe to `jq`.
-- **Don't shell out to curl** for catalog or platform endpoints when an MCP tool exists. Reach for `curl` only for things outside the wrapper, and even then prefer `mcp__webrobot__api_call`.
+- **Don't shell out to curl** for catalog or platform endpoints when an MCP tool exists. Reach for `curl` (`https://api.webrobot.eu/api/webrobot/api/...` + `X-API-Key`) only for endpoints without a tool, such as vertical apps and tenant chat.
+- **Scope of the CLI**: pipelines, jobs, datasets (`dataset query` included). Agents, schedules, apps and knowledge are not in the CLI — use the MCP tools (webrobot-agents, webrobot-app-builder skills).
 
 ## On $ARGUMENTS
 

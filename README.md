@@ -4,7 +4,7 @@
 
 ### Turn Claude Code into a data engineer — scrape the web, build Spark ETL pipelines, and run them, all by conversation.
 
-[![MCP](https://img.shields.io/badge/MCP-server-7c4fb5)](https://mcp.webrobot.eu/mcp)
+[![MCP](https://img.shields.io/badge/MCP-server-7c4fb5)](https://mcp-full.webrobot.eu/mcp)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-5b54ec)](https://github.com/WebRobot-Ltd/claude-code-webrobot-skills)
 [![Live demo](https://img.shields.io/badge/%E2%96%B6-live%20demo-00bcd4)](https://portal.webrobot.eu/chat.html)
 [![Docs](https://img.shields.io/badge/docs-webrobot.eu-333)](https://docs.webrobot.eu)
@@ -21,12 +21,13 @@
 
 It bundles:
 
-- **10 skills** — invokable as slash commands inside Claude Code — covering
-  pipelines, the CLI, the public SDKs, plugin development, and the platform overview.
+- **14 skills** — invokable as slash commands inside Claude Code — covering setup,
+  datasets and SQL, pipelines, Agent Studio agents and teams, background runs and
+  schedules, vertical apps, admin, the CLI, the public SDKs and plugin development.
 - A hosted **Model Context Protocol (MCP) server** that exposes the WebRobot
   REST API as typed tools Claude can call directly (list / create / execute /
-  inspect projects, jobs, pipelines, agents, datasets, cloud credentials, LLM
-  providers, plus manifest validate/apply and ETL stage discovery).
+  inspect datasets, pipelines, jobs, agents and teams, schedules, knowledge, analytics
+  reports and admin entities).
 
 Repo: [github.com/WebRobot-Ltd/claude-code-webrobot-skills](https://github.com/WebRobot-Ltd/claude-code-webrobot-skills)
 — ships as `.claude-plugin/plugin.json` + `skills/` + `mcp-server/`.
@@ -41,49 +42,34 @@ In Claude Code, add this repository as a plugin source and install the
 `webrobot` plugin:
 
 ```
-/plugin marketplace add https://github.com/WebRobot-Ltd/webrobot-claude-plugin
+/plugin marketplace add https://github.com/WebRobot-Ltd/claude-code-webrobot-skills
 /plugin install webrobot
 ```
 
-Claude Code will pick up the skills (under `/`) and connect the `webrobot`
-MCP server (HTTP) from the `mcpServers.webrobot` entry in `plugin.json` —
-the **hosted, official endpoint** `https://mcp.webrobot.eu/mcp`. Nothing to
-install locally (no Python process, no dependencies).
-
-> The bundled `mcp-server/` (a local Python MCP that wraps the REST API) is
-> retained for offline/self-hosted use, but the plugin now uses the hosted MCP
-> by default. To run it locally instead, set `mcpServers.webrobot` to
-> `{ "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-server/server.py"] }`
-> and `pip install -r mcp-server/requirements.txt`.
-
----
+Claude Code picks up the skills and connects the `webrobot` MCP server from
+`plugin.json`: the **hosted, authenticated** endpoint
+`https://mcp-full.webrobot.eu/mcp`. Nothing to install locally.
 
 ## Configure credentials
 
-The MCP server reads credentials from, in priority order:
+The MCP server authenticates every call with your **WebRobot API key**, sent as
+the `X-API-Key` header. The plugin reads it from the environment, so export it
+**before** starting Claude Code:
 
-1. Environment variables: `WEBROBOT_API_ENDPOINT`, `WEBROBOT_API_KEY`,
-   `WEBROBOT_JWT`.
-2. Plugin-scoped JSON config: `~/.claude/plugins/webrobot/config.json`
-   — preferred when you don't have the CLI installed.
-3. CLI HOCON configs, looked up in this order:
-   - `~/.config/webrobot/config.cfg`
-   - `~/.webrobot/config.cfg`
-   - `./config.cfg` (current working directory)
-
-Minimal plugin config:
-
-```json
-{
-  "api_endpoint": "https://api.webrobot.eu",
-  "apikey":       "your-api-key:your-secret"
-}
+```bash
+export WEBROBOT_API_KEY="<your api key>"     # Console → Developer → API → Request New API Key
+claude
 ```
 
-`apikey` is sent as `Authorization: ApiKey …` and `X-API-Key`. A `jwt`
-field is also honored and overrides the API key when present.
+Everything the key does is scoped to the key's organization and role. Check the
+connection by asking Claude to run the `getCurrentUser` tool (start with the
+`webrobot-setup` skill).
 
-Default endpoint when nothing is configured: `https://api.webrobot.eu`.
+> The bundled `mcp-server/` (a local Python MCP that wraps the REST API) is kept
+> for offline/self-hosted use. To run it instead, set `mcpServers.webrobot` to
+> `{ "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-server/server.py"] }`,
+> `pip install -r mcp-server/requirements.txt`, and set `WEBROBOT_API_ENDPOINT`
+> (`https://api.webrobot.eu`) and `WEBROBOT_API_KEY`.
 
 ---
 
@@ -109,24 +95,29 @@ plus optional companion files (examples, scripts) in the same directory.
 
 ## MCP server tools
 
-The server (`mcp-server/server.py`) exposes the WebRobot REST API as
-~30 MCP tools, grouped by domain:
+The hosted server (`https://mcp-full.webrobot.eu/mcp`) exposes the WebRobot REST API
+as **~500 typed tools**, one per API operation (tool name = the OpenAPI operationId).
+The ones you use most, by area:
 
-- **Auth**: `auth_me`, `auth_check`, `auth_set`.
-- **Projects**: `list_projects`, `get_project`, `create_project`, `delete_project`.
-- **Jobs**: `list_jobs`, `get_job`, `create_job`, `delete_job`, `execute_job`, `stop_job`.
-- **Executions**: `list_executions`, `get_execution_logs`.
-- **Stages (ETL catalog)**: `list_stages`, `describe_stage`, `search_stages`, `suggest_pipeline_stages`.
-- **Manifests**: `validate_manifest`, `apply_manifest`, `run_pipeline`.
-- **Categories + agents**: `list_categories`, `list_agents`, `get_agent`, `create_agent`, `get_agent_code`.
-- **Datasets**: `list_datasets`, `delete_dataset`.
-- **Cloud credentials**: `list_cloud_credentials`.
-- **LLM**: `list_llm_providers`, `llm_infer`.
-- **Escape hatch**: `api_call` — call any WebRobot endpoint by path/method when no typed tool fits.
+- **Account**: `getCurrentUser`, `getHealth`, `createApiKey`, `listApiKeys`.
+- **Datasets**: `getAllDatasets`, `getDataset`, `getDatasetFields`, `uploadCsv`,
+  `uploadDatasetJson`, `executeQuery` (SQL with the `[datasetId]` shortcut),
+  `queryDatasetByTask` (SQL with `{table}`).
+- **Pipelines**: `listStages`, `getStage`, `suggestStages_1`, `manifestValidate`,
+  `manifestApply`, `saveGeneratedPipeline`, `pipelineDraftPut` (Pipeline Designer draft slot).
+- **Projects & jobs**: `getAllProjects`, `createProject`, `getProjectJobs`, `executeJob_1`
+  (Spark by default; `engine` = scrapy, hybrid, temporal, slurm), `executionStatus`,
+  `executionLogs`, `executionOutput`.
+- **Agents (Agent Studio)**: `listProfiles`, `getProfile`, `createProfile`, `updateProfile`,
+  `agentProfileDraftPut`, `start` (run as a Ray job), `listExecutions`,
+  `scheduleAgentic`, `deleteAgenticSchedule`.
+- **Knowledge & analytics**: `ragQuery_1`, `ragStatus_1`, `createAnalyticsReport`,
+  `getAnalyticsReport`, `listAnalyticsReports`.
+- **Admin**: `createCloudCredential`, `getAllCloudCredentials`, `getAllAgents`, `createAgent`, …
 
-All tools return JSON strings. The MCP server has no business logic of
-its own; it's a thin, typed wrapper over the REST API + a config
-loader.
+Vertical apps (App Builder) and AI Agent Deploy (dedicated chat servers) are used
+through the REST API (`https://api.webrobot.eu/api/webrobot/api/...`), as the
+`webrobot-app-builder` skill shows.
 
 ---
 
@@ -136,7 +127,11 @@ loader.
 .claude-plugin/plugin.json     Plugin manifest read by Claude Code
 .mcp.json                       Stand-alone MCP server entry (for local dev)
 skills/
+  webrobot-setup/               Connect + task → tool map (start here)
   webrobot-overview/            Platform overview skill
+  webrobot-datasets/            Datasets, upload, SQL
+  webrobot-agents/              Agent Studio: agents, teams, background runs, schedules
+  webrobot-app-builder/         Vertical apps: manifest, publish
   webrobot-pipeline/            Pipeline authoring skill
   webrobot-cli/                 CLI usage skill
   webrobot-admin/               Admin operations skill
@@ -147,7 +142,7 @@ skills/
   webrobot-sdk-nodejs/          Node SDK skill
   webrobot-sdk-python/          Python SDK skill
 mcp-server/
-  server.py                     FastMCP server, ~30 tools
+  server.py                     Local FastMCP server (offline/self-hosted alternative)
   requirements.txt              Single dep: mcp>=1.0.0
 ```
 
