@@ -17,9 +17,11 @@ The plugin's MCP server is called `webrobot`:
 So the key must be in the environment **before** Claude Code starts:
 
 ```bash
-export WEBROBOT_API_KEY="wr_live_..."   # your key
-claude                                   # start (or restart) Claude Code
+export WEBROBOT_API_KEY="wr_xxxxxxxxxxxx:<secret>"   # key_id:secret, exactly as the console shows it
+claude                                                  # start (or restart) Claude Code
 ```
+
+The value is the key id and the secret joined by a colon (`key_id:secret`). The secret alone, or `key_id.secret`, answers 401.
 
 If the variable was missing at startup, the server connects without a key and every call answers 401. Export the variable and restart Claude Code; `/mcp` shows whether `webrobot` is connected.
 

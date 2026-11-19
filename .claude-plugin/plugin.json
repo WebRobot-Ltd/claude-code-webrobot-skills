@@ -1,7 +1,7 @@
 {
   "name": "webrobot",
   "description": "WebRobot platform for Claude Code — datasets, pipelines (Spark/Scrapy, ephemeral VMs), Agent Studio agents and teams, background runs and schedules, vertical apps, knowledge and analytics, through the authenticated WebRobot MCP",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": {
     "name": "WebRobot Ltd",
     "email": "ceo@webrobot.eu"

@@ -42,9 +42,12 @@ In Claude Code, add this repository as a plugin source and install the
 `webrobot` plugin:
 
 ```
-/plugin marketplace add https://github.com/WebRobot-Ltd/claude-code-webrobot-skills
-/plugin install webrobot
+/plugin marketplace add WebRobot-Ltd/claude-code-webrobot-skills
+/plugin install webrobot@webrobot
 ```
+
+From a terminal the same is `claude plugin marketplace add WebRobot-Ltd/claude-code-webrobot-skills`
+then `claude plugin install webrobot@webrobot`.
 
 Claude Code picks up the skills and connects the `webrobot` MCP server from
 `plugin.json`: the **hosted, authenticated** endpoint
@@ -57,9 +60,11 @@ the `X-API-Key` header. The plugin reads it from the environment, so export it
 **before** starting Claude Code:
 
 ```bash
-export WEBROBOT_API_KEY="<your api key>"     # Console → Developer → API → Request New API Key
+export WEBROBOT_API_KEY="<key_id>:<secret>"   # Console → Developer → API → Request New API Key
 claude
 ```
+
+The value is the key id and the secret joined by a colon, as the console shows them.
 
 Everything the key does is scoped to the key's organization and role. Check the
 connection by asking Claude to run the `getCurrentUser` tool (start with the
