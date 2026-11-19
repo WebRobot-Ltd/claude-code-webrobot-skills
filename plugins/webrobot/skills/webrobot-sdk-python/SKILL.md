@@ -49,24 +49,7 @@ api_client = webrobot.ApiClient(configuration)
 api        = webrobot.DefaultApi(api_client)
 ```
 
-For development environments, the same `~/.webrobot/config.cfg` used by the WebRobot CLI works as a credential source. The Python SDK doesn't auto-load it; parse it manually if you want one source of truth:
-
-```python
-import re
-from pathlib import Path
-
-def load_cli_credentials() -> dict:
-    cfg = Path.home() / ".webrobot" / "config.cfg"
-    if not cfg.exists():
-        return {}
-    text = cfg.read_text()
-    out = {}
-    for key in ("api_endpoint", "apikey", "jwt"):
-        m = re.search(rf'{key}\s*=\s*"([^"]*)"', text)
-        if m:
-            out[key] = m.group(1)
-    return out
-```
+Keep the key and the JWT in your own secret store (a vault, your CI secrets) and pass them in; do not read them from files on a developer machine.
 
 ---
 

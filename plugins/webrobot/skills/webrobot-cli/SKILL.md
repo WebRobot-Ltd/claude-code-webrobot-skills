@@ -20,19 +20,13 @@ You drive the `webrobot` CLI on the user's behalf. The CLI is a Java JAR (Java 1
 | Plugin JAR install on user machine | `webrobot cli plugins install <coords>` | The user's local plugin folder is `~/.webrobot/plugins/` |
 | Anything requiring shell context (env vars, working dir) | CLI | MCP runs in a sandboxed Python process |
 
-The CLI and the MCP server share the same `~/.webrobot/config.cfg` for credentials, so they're interchangeable from an auth perspective.
+The CLI has its own login (`webrobot config init`); the MCP server uses the key entered in the plugin's configuration. Both act inside the key's organization.
 
-## Auth model — same config the MCP shares
+## Auth
 
-```ini
-# ~/.webrobot/config.cfg  (HOCON)
-api_endpoint = "https://api.webrobot.eu"
-apikey       = "wr_..."
-# OR (mutually exclusive):
-# jwt        = "eyJ..."
-```
-
-`webrobot config init` walks the user through this. To verify: `webrobot auth me` returns the resolved org_id + user_id when authenticated.
+The user signs the CLI in once with `webrobot config init` (it asks for the API endpoint and the
+key, or a JWT). To verify: `webrobot auth me` returns the resolved org_id + user_id when
+authenticated. Never ask the user to paste a key into the chat: they enter it in the CLI prompt.
 
 ## Command groups (top-level)
 

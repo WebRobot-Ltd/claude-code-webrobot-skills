@@ -458,12 +458,10 @@ public class MyPlugin {
 ### JDBC access pattern
 
 ```java
+// Use the API server's own connection pool: the platform owns the database credentials,
+// a plugin never reads or carries them.
 private Connection getConnection() throws SQLException {
-    Properties props = new Properties();
-    props.setProperty("user",         System.getenv("DB_USER"));
-    props.setProperty("password",     System.getenv("DB_PASSWORD"));
-    props.setProperty("loginTimeout", "5");
-    return DriverManager.getConnection(System.getenv("DB_JDBC_URL"), props);
+    return org.webrobot.eu.apis.jersey.db.MyBatisBootstrap.getDataSource().getConnection();
 }
 
 // Always try-with-resources for both Connection and PreparedStatement

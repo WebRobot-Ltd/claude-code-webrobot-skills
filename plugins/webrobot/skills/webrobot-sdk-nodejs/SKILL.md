@@ -51,25 +51,7 @@ const { WebRobotClient } = require("webrobot-sdk");
 const client = new WebRobotClient({ baseUrl: "...", apiKey: "..." });
 ```
 
-For local dev, share `~/.webrobot/config.cfg` with the WebRobot CLI by parsing it manually:
-
-```typescript
-import fs from "fs";
-import path from "path";
-import os from "os";
-
-function loadCliCredentials(): Record<string, string> {
-  const cfg = path.join(os.homedir(), ".webrobot", "config.cfg");
-  if (!fs.existsSync(cfg)) return {};
-  const text = fs.readFileSync(cfg, "utf8");
-  const out: Record<string, string> = {};
-  for (const key of ["api_endpoint", "apikey", "jwt"]) {
-    const m = text.match(new RegExp(`${key}\\s*=\\s*"([^"]*)"`));
-    if (m) out[key] = m[1];
-  }
-  return out;
-}
-```
+Keep the key and the JWT in your own secret store (a vault, your CI secrets) and pass them in; do not read them from files on a developer machine.
 
 ---
 

@@ -69,7 +69,7 @@ ApiClient   apiClient = sdk.getApiClient();
 DefaultApi  api       = sdk.api();
 ```
 
-For local development, the same `~/.webrobot/config.cfg` used by the WebRobot CLI works — no need to duplicate keys. The Java SDK doesn't auto-load it; either parse the HOCON yourself or use env vars.
+Keep the key and the JWT in your own secret store (a vault, your CI secrets) and pass them in.
 
 ---
 
