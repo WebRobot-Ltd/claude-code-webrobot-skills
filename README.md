@@ -30,7 +30,7 @@ It bundles:
   reports and admin entities).
 
 Repo: [github.com/WebRobot-Ltd/claude-code-webrobot-skills](https://github.com/WebRobot-Ltd/claude-code-webrobot-skills)
-— ships as `.claude-plugin/plugin.json` + `skills/` + `mcp-server/`.
+— ships as `plugins/webrobot/` (`.claude-plugin/plugin.json` + `skills/`), plus the optional `mcp-server/`.
 
 > ⭐ **If this is useful, star the repo** — it helps other data &amp; AI engineers find it.
 
@@ -55,20 +55,18 @@ Claude Code picks up the skills and connects the `webrobot` MCP server from
 
 ## Configure credentials
 
-The MCP server authenticates every call with your **WebRobot API key**, sent as
-the `X-API-Key` header. The plugin reads it from the environment, so export it
-**before** starting Claude Code:
+The MCP server authenticates every call with your **WebRobot API key**, sent as the `X-API-Key`
+header. Claude Code asks for it when the plugin is enabled (the plugin's **WebRobot API key**
+option, stored as a secret); change it later from `/plugin` → `webrobot`. From a terminal:
+`claude plugin install webrobot@webrobot --config api_key=<key_id>:<secret>`.
 
-```bash
-export WEBROBOT_API_KEY="<key_id>:<secret>"   # Console → Developer → API → Request New API Key
-claude
-```
+Create the key in the console under **Developer → API → Request New API Key**; the value is the
+key id and the secret joined by a colon. Everything the key does is scoped to the key's
+organization and role. Check the connection with `/mcp`, then ask Claude to run `getCurrentUser`
+(start with the `webrobot-setup` skill).
 
-The value is the key id and the secret joined by a colon, as the console shows them.
-
-Everything the key does is scoped to the key's organization and role. Check the
-connection by asking Claude to run the `getCurrentUser` tool (start with the
-`webrobot-setup` skill).
+The plugin itself lives in [`plugins/webrobot/`](plugins/webrobot/) (manifest, skills, README);
+the rest of this repository is supporting material.
 
 > The bundled `mcp-server/` (a local Python MCP that wraps the REST API) is kept
 > for offline/self-hosted use. To run it instead, set `mcpServers.webrobot` to
@@ -93,7 +91,7 @@ connection by asking Claude to run the `getCurrentUser` tool (start with the
 | `/webrobot-sdk-nodejs` | Consume the WebRobot REST API from Node.js / TypeScript using the public npm package. |
 | `/webrobot-sdk-python` | Consume the WebRobot REST API from Python using the public package. |
 
-Each skill is a self-contained markdown file under `skills/<name>/SKILL.md`
+Each skill is a self-contained markdown file under `plugins/webrobot/skills/<name>/SKILL.md`
 plus optional companion files (examples, scripts) in the same directory.
 
 ---
@@ -129,9 +127,12 @@ through the REST API (`https://api.webrobot.eu/api/webrobot/api/...`), as the
 ## Repository layout
 
 ```
-.claude-plugin/plugin.json     Plugin manifest read by Claude Code
-.mcp.json                       Stand-alone MCP server entry (for local dev)
-skills/
+.claude-plugin/marketplace.json  Marketplace manifest (lists plugins/webrobot)
+.mcp.json                        Stand-alone MCP server entry (for local dev)
+plugins/webrobot/                The plugin submitted to the Claude directory
+  .claude-plugin/plugin.json     Plugin manifest (userConfig api_key + MCP server)
+  README.md
+  skills/
   webrobot-setup/               Connect + task → tool map (start here)
   webrobot-overview/            Platform overview skill
   webrobot-datasets/            Datasets, upload, SQL
@@ -157,7 +158,7 @@ mcp-server/
 
 The plugin has no build step. Local iteration:
 
-1. Edit a `skills/<name>/SKILL.md` or `mcp-server/server.py`.
+1. Edit a `plugins/webrobot/skills/<name>/SKILL.md` or `mcp-server/server.py`.
 2. In Claude Code, reload the plugin (`/plugin reload webrobot`).
 3. Try the slash command or call the MCP tool.
 
@@ -170,7 +171,7 @@ python3 mcp-server/server.py
 (Stdio MCP transport; pipe a `tools/list` request to confirm the tools
 load and credentials resolve.)
 
-To add a new skill, create `skills/<new-name>/SKILL.md` with the
+To add a new skill, create `plugins/webrobot/skills/<new-name>/SKILL.md` with the
 standard frontmatter:
 
 ```yaml

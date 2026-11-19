@@ -3,7 +3,6 @@ name: webrobot-pipeline
 description: Build, validate, deploy and run WebRobot ETL pipelines (manifest YAML with kinds Project / Dataset / Pipeline / Job). Use when the user wants to create or modify a pipeline, add stages, configure a scraping workflow, run a pipeline job, or query its results.
 argument-hint: [pipeline description or yaml path]
 user-invocable: true
-allowed-tools: Read Write Edit Bash(webrobot *) Bash(curl -fsSL https://api.webrobot.eu/api/webrobot/api/*)
 ---
 
 # WebRobot Pipeline Builder

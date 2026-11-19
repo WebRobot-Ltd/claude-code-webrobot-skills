@@ -3,7 +3,6 @@ name: webrobot-frontend-plugin-dev
 description: Build a partner-authored UI plugin for the WebRobot dashboard (Next.js). Plugins ship as a ZIP with ESM bundles, are uploaded to MinIO, and hot-load in the dashboard via blob-URL import() — no rebuild of the host app required. Use when the user wants to add a custom dashboard view, configuration page, or vertical UI to the WebRobot host shell.
 argument-hint: [plugin description, e.g. "sentiment dashboard with timeseries chart"]
 user-invocable: true
-allowed-tools: Read Write Edit Bash(npm *) Bash(npx *) Bash(yarn *) Bash(pnpm *) Bash(node *) Bash(curl -fsSL https://api.webrobot.eu/api/webrobot/api/catalog/stages*)
 ---
 
 # WebRobot Frontend Plugin Developer

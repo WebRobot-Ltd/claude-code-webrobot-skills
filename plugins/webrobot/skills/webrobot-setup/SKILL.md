@@ -1,6 +1,6 @@
 ---
 name: webrobot-setup
-description: Connect Claude Code to WebRobot and find the right tool for a task. Covers the API key and WEBROBOT_API_KEY env var, verifying the connection, what each platform area does, and a task-to-tool map (datasets, pipelines, projects and jobs, agents, apps, knowledge, analytics reports, AI Agent Deploy) with exact MCP tool names and REST paths. Use first when the user is getting started, when a WebRobot tool call fails with 401/403/404, or when you don't know which tool covers a task.
+description: Connect Claude Code to WebRobot and find the right tool for a task. Covers the API key (the plugin's "WebRobot API key" option), verifying the connection, what each platform area does, and a task-to-tool map (datasets, pipelines, projects and jobs, agents, apps, knowledge, analytics reports, AI Agent Deploy) with exact MCP tool names and REST paths. Use first when the user is getting started, when a WebRobot tool call fails with 401/403/404, or when you don't know which tool covers a task.
 argument-hint: [what to set up or do, e.g. "connect my account" or "which tool runs a job"]
 user-invocable: true
 ---
@@ -12,18 +12,13 @@ user-invocable: true
 The plugin's MCP server is called `webrobot`:
 
 - URL: `https://mcp-full.webrobot.eu/mcp`
-- Auth header: `X-API-Key: ${WEBROBOT_API_KEY}`
+- Auth header: `X-API-Key`, filled from the plugin's **WebRobot API key** option
 
-So the key must be in the environment **before** Claude Code starts:
+Claude Code asks for the key when the plugin is installed or enabled and keeps it as a secret. To change it later, open `/plugin`, select `webrobot` and edit its configuration.
 
-```bash
-export WEBROBOT_API_KEY="wr_xxxxxxxxxxxx:<secret>"   # key_id:secret, exactly as the console shows it
-claude                                                  # start (or restart) Claude Code
-```
+The value is the key id and the secret joined by a colon (`key_id:secret`), exactly as the console shows it. The secret alone, or `key_id.secret`, answers 401.
 
-The value is the key id and the secret joined by a colon (`key_id:secret`). The secret alone, or `key_id.secret`, answers 401.
-
-If the variable was missing at startup, the server connects without a key and every call answers 401. Export the variable and restart Claude Code; `/mcp` shows whether `webrobot` is connected.
+If no key was set, the server connects without one and every call answers 401. Set the key in the plugin's configuration and restart Claude Code; `/mcp` shows whether `webrobot` is connected.
 
 **Getting a key:** in the console go to **Developer → API** and create one. An admin can also create one with the `createApiKey` tool (body `{"label": "...", "owner_role": "developer"}`; `scopes` and `expires_at` are optional; needs the admin role). `listApiKeys` lists them and `deleteApiKey` revokes one.
 
@@ -216,7 +211,7 @@ A report row is only the archive. The analysis itself is an agent run (`start`) 
 
 | Symptom | Cause / fix |
 |---|---|
-| **401** on every call | No key or a bad key. `WEBROBOT_API_KEY` was not exported before Claude Code started, or the key was revoked. Export it and restart. |
+| **401** on every call | No key or a bad key. The plugin's **WebRobot API key** option is empty, not in `key_id:secret` form, or the key was revoked. Set it in `/plugin` → `webrobot` and restart Claude Code. |
 | **401** on `saveGeneratedPipeline` with a super_admin key | That key has no own org, so pass `organization_id`. |
 | **403** | The role is too low (viewer can't create, `indexDataset` and `createApiKey` need admin), or the resource belongs to another org. Check `getCurrentUser`. |
 | **404** on something you can see in the console | It belongs to another org (cross-org reads answer 404), or the path is wrong. REST paths need the `/api` prefix: `https://api.webrobot.eu/api/webrobot/api/...`. |

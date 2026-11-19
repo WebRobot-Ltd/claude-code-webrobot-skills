@@ -1,20 +1,30 @@
 {
   "name": "webrobot",
   "description": "WebRobot platform for Claude Code — datasets, pipelines (Spark/Scrapy, ephemeral VMs), Agent Studio agents and teams, background runs and schedules, vertical apps, knowledge and analytics, through the authenticated WebRobot MCP",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "author": {
     "name": "WebRobot Ltd",
-    "email": "ceo@webrobot.eu"
+    "email": "ceo@webrobot.eu",
+    "url": "https://webrobot.eu"
   },
   "homepage": "https://webrobot.eu",
   "repository": "https://github.com/WebRobot-Ltd/claude-code-webrobot-skills",
   "license": "MIT",
+  "keywords": ["webrobot", "etl", "data-pipelines", "agents", "mcp", "price-intelligence"],
+  "userConfig": {
+    "api_key": {
+      "type": "string",
+      "title": "WebRobot API key",
+      "description": "Your WebRobot API key as key_id:secret (Console → Developer → API → Request New API Key). It is scoped to one organization.",
+      "sensitive": true
+    }
+  },
   "mcpServers": {
     "webrobot": {
       "type": "http",
       "url": "https://mcp-full.webrobot.eu/mcp",
       "headers": {
-        "X-API-Key": "${WEBROBOT_API_KEY}"
+        "X-API-Key": "${user_config.api_key}"
       }
     }
   }

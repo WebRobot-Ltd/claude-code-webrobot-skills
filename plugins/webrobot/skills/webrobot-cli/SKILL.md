@@ -3,7 +3,6 @@ name: webrobot-cli
 description: Use the WebRobot command-line tool to manage projects, jobs, agents, datasets, plugins and pipeline execution. Use when the user wants to run a command-line operation, install a plugin JAR, deploy a manifest, or batch-process resources via shell.
 argument-hint: [command or task, e.g. "list jobs for project X" or "run pipeline yaml"]
 user-invocable: true
-allowed-tools: Bash(webrobot *) Read Write Edit
 ---
 
 # WebRobot CLI

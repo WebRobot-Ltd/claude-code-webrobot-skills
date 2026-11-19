@@ -3,7 +3,6 @@ name: webrobot-plugin-dev
 description: Build WebroBot plugins — custom ETL stages (Scala SDK) and REST API endpoints (Java JAX-RS). Use when the user wants to create a new plugin, add a custom stage, extend the REST API, or understand the plugin architecture.
 argument-hint: [plugin type and description, e.g. "ETL stage to save leads to CRM" or "REST API plugin for price comparison"]
 user-invocable: true
-allowed-tools: Read Write Edit Bash(gradle *) Bash(mvn *) Bash(JAVA_HOME=* ./gradlew *) Bash(JAVA_HOME=* mvn *)
 ---
 
 # WebroBot Plugin Developer

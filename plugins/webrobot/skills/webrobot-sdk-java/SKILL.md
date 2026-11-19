@@ -3,7 +3,6 @@ name: webrobot-sdk-java
 description: Consume the WebRobot REST API from a Java/Kotlin/Scala application using the public webrobot-sdk JAR. Use when the user wants to integrate WebRobot into a JVM service, build automation, or partner application — NOT for writing ETL/Jersey plugins (those use a different SDK; see /webrobot-plugin-dev).
 argument-hint: [task description, e.g. "list projects from my Spring Boot app"]
 user-invocable: true
-allowed-tools: Read Write Edit Bash(mvn *) Bash(JAVA_HOME=* mvn *) Bash(./gradlew *) Bash(JAVA_HOME=* ./gradlew *) Bash(curl -fsSL https://api.webrobot.eu/api/webrobot/api/catalog/stages*)
 ---
 
 # WebRobot Java SDK (client)

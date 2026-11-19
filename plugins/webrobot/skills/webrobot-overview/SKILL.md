@@ -3,7 +3,6 @@ name: webrobot-overview
 description: Overview of the WebRobot platform — what it is, the three studios (Pipeline Designer, Agent Studio, App Studio), Knowledge, Analytics, AI Agent Deploy, Marketplace, execution engines, SaaS vs BYOC delivery, API/CLI/MCP access, and pricing. Use when the user asks WHAT WebRobot is, how it differs from other tools, which plan fits, or how the pieces fit together. Hands-on tasks go to the dedicated skills.
 argument-hint: [topic, e.g. "pricing", "BYOC", "Agent Studio", "engines", "vs Apify"]
 user-invocable: true
-allowed-tools: Read Bash(curl -fsSL https://webrobot.eu*) Bash(curl -fsSL https://docs.webrobot.eu*)
 ---
 
 # WebRobot — Platform Overview

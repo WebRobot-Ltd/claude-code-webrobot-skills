@@ -3,7 +3,6 @@ name: webrobot-sdk-python
 description: Consume the WebRobot REST API from a Python application using the public webrobot-sdk Python package. Use when the user wants to integrate WebRobot into a Python script, ETL job, or backend — NOT for writing Python Extensions inside the ETL engine (those use a different mechanism; see /webrobot-python-extension).
 argument-hint: [task description, e.g. "list projects from a Python script"]
 user-invocable: true
-allowed-tools: Read Write Edit Bash(python *) Bash(python3 *) Bash(pip *) Bash(curl -fsSL https://api.webrobot.eu/api/webrobot/api/catalog/stages*)
 ---
 
 # WebRobot Python SDK (client)

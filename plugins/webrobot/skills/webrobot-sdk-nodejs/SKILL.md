@@ -3,7 +3,6 @@ name: webrobot-sdk-nodejs
 description: Consume the WebRobot REST API from a Node.js / TypeScript application using the public webrobot-sdk npm package. Use when the user wants to integrate WebRobot into a Node service, build automation, browser/electron app, or partner backend.
 argument-hint: [task description, e.g. "list projects from a TypeScript backend"]
 user-invocable: true
-allowed-tools: Read Write Edit Bash(node *) Bash(npm *) Bash(npx *) Bash(yarn *) Bash(pnpm *) Bash(curl -fsSL https://api.webrobot.eu/api/webrobot/api/catalog/stages*)
 ---
 
 # WebRobot Node.js / TypeScript SDK (client)

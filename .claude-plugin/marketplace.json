@@ -10,9 +10,9 @@
   "plugins": [
     {
       "name": "webrobot",
-      "source": "./",
+      "source": "./plugins/webrobot",
       "description": "WebRobot platform for Claude Code — datasets, pipelines (Spark/Scrapy, ephemeral VMs), Agent Studio agents and teams, background runs and schedules, vertical apps, knowledge and analytics, through the authenticated WebRobot MCP",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "homepage": "https://webrobot.eu",
       "repository": "https://github.com/WebRobot-Ltd/claude-code-webrobot-skills",
       "license": "MIT"
