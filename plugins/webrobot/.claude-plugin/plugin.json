@@ -1,7 +1,7 @@
 {
   "name": "webrobot",
   "description": "WebRobot platform for Claude Code — datasets, pipelines (Spark/Scrapy, ephemeral VMs), Agent Studio agents and teams, background runs and schedules, vertical apps, knowledge and analytics, through the authenticated WebRobot MCP",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "author": {
     "name": "WebRobot Ltd",
     "email": "ceo@webrobot.eu",
@@ -10,7 +10,16 @@
   "homepage": "https://webrobot.eu",
   "repository": "https://github.com/WebRobot-Ltd/claude-code-webrobot-skills",
   "license": "MIT",
-  "keywords": ["webrobot", "etl", "data-pipelines", "agents", "mcp", "price-intelligence"],
+  "icon": ".claude-plugin/icon.png",
+  "privacyPolicyUrl": "https://www.webrobot.eu/trust/privacy",
+  "keywords": [
+    "webrobot",
+    "etl",
+    "data-pipelines",
+    "agents",
+    "mcp",
+    "price-intelligence"
+  ],
   "userConfig": {
     "api_key": {
       "type": "string",

@@ -1,7 +1,7 @@
 ---
-name: webrobot-sdk-nodejs
-description: Consume the WebRobot REST API from a Node.js / TypeScript application using the public webrobot-sdk npm package. Use when the user wants to integrate WebRobot into a Node service, build automation, browser/electron app, or partner backend.
-argument-hint: [task description, e.g. "list projects from a TypeScript backend"]
+name: "webrobot-sdk-nodejs"
+description: "Consume the WebRobot REST API from a Node.js / TypeScript application using the public webrobot-sdk npm package. Use when the user wants to integrate WebRobot into a Node service, build automation, browser/electron app, or partner backend."
+argument-hint: "[task description, e.g. \"list projects from a TypeScript backend\"]"
 user-invocable: true
 ---
 
@@ -15,19 +15,9 @@ For full coverage of all 138 endpoints (including admin / billing / ai-providers
 
 ## Install
 
-Until npm publication, install directly from GitHub:
-
-```bash
-npm install "git+https://github.com/WebRobot-Ltd/webrobot-sdk.git#main:nodejs-sdk"
-# or
-yarn add "git+https://github.com/WebRobot-Ltd/webrobot-sdk.git#main"
-```
-
-Once published to npm:
-
-```bash
-npm install webrobot-sdk
-```
+Install the SDK as described in its repository: https://github.com/WebRobot-Ltd/webrobot-sdk
+(folder `nodejs-sdk`, README "Install"). Follow your package manager's own documentation for
+installing from a Git repository or, once it is published, from npm (`webrobot-sdk`).
 
 Node 18+ (uses native `fetch`). TypeScript 5+ recommended.
 
@@ -38,18 +28,19 @@ Node 18+ (uses native `fetch`). TypeScript 5+ recommended.
 Two modes. Pick one — never both.
 
 ```typescript
+// API_KEY = "<key_id>:<secret>" and JWT come from your own secret store — never hard-code them.
 import { WebRobotClient } from "webrobot-sdk";
 
 // Option A — API key
 const client = new WebRobotClient({
   baseUrl: "https://api.webrobot.eu/api",  // generated paths start with /webrobot/api
-  apiKey:  process.env.WEBROBOT_API_KEY,
+  apiKey:  API_KEY,
 });
 
 // Option B — JWT bearer
 const client = new WebRobotClient({
   baseUrl: "https://api.webrobot.eu/api",  // generated paths start with /webrobot/api
-  jwt:     process.env.WEBROBOT_JWT,
+  jwt:     JWT,
 });
 ```
 
@@ -89,7 +80,7 @@ import { WebRobotClient } from "webrobot-sdk";
 
 const client = new WebRobotClient({
   baseUrl: "https://api.webrobot.eu/api",  // generated paths start with /webrobot/api
-  apiKey:  process.env.WEBROBOT_API_KEY!,
+  apiKey:  API_KEY,
 });
 
 // List projects
@@ -164,7 +155,7 @@ async function apiCall<T = unknown>(
     method,
     headers: {
       "Content-Type": "application/json",
-      "X-API-Key":    process.env.WEBROBOT_API_KEY!,
+      "X-API-Key":    API_KEY,
     },
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
   });
@@ -260,7 +251,7 @@ console.log(allJobs.flat().length, "jobs total");
 ```typescript
 const res = await fetch(
   `https://api.webrobot.eu/api/webrobot/api/projects/42/jobs/7/logs?stream=true`,
-  { headers: { "X-API-Key": process.env.WEBROBOT_API_KEY! } },
+  { headers: { "X-API-Key": API_KEY } },
 );
 const reader = res.body!.getReader();
 const decoder = new TextDecoder();

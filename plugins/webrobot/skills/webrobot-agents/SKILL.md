@@ -1,7 +1,7 @@
 ---
-name: webrobot-agents
-description: Build and run WebRobot Agent Studio agents and teams — agentic profiles (crews + orchestration), chat vs background surface, the profile draft channel, starting runs and reading results/logs, cron schedules, webhook triggers, and knowledge-base (RAG) access. Use when the user wants to create, edit, run, schedule or debug an AI agent or multi-agent team on WebRobot.
-argument-hint: [what the agent/team should do, or "run/schedule profile N"]
+name: "webrobot-agents"
+description: "Build and run WebRobot Agent Studio agents and teams — agentic profiles (crews + orchestration), chat vs background surface, the profile draft channel, starting runs and reading results/logs, cron schedules, webhook triggers, and knowledge-base (RAG) access. Use when the user wants to create, edit, run, schedule or debug an AI agent or multi-agent team on WebRobot."
+argument-hint: "[what the agent/team should do, or \"run/schedule profile N\"]"
 user-invocable: true
 ---
 

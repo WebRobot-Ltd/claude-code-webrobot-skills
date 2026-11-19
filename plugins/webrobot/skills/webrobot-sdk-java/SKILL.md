@@ -1,7 +1,7 @@
 ---
-name: webrobot-sdk-java
-description: Consume the WebRobot REST API from a Java/Kotlin/Scala application using the public webrobot-sdk JAR. Use when the user wants to integrate WebRobot into a JVM service, build automation, or partner application — NOT for writing ETL/Jersey plugins (those use a different SDK; see /webrobot-plugin-dev).
-argument-hint: [task description, e.g. "list projects from my Spring Boot app"]
+name: "webrobot-sdk-java"
+description: "Consume the WebRobot REST API from a Java/Kotlin/Scala application using the public webrobot-sdk JAR. Use when the user wants to integrate WebRobot into a JVM service, build automation, or partner application — NOT for writing ETL/Jersey plugins (those use a different SDK; see /webrobot-plugin-dev)."
+argument-hint: "[task description, e.g. \"list projects from my Spring Boot app\"]"
 user-invocable: true
 ---
 
@@ -52,6 +52,7 @@ JDK 17+ required.
 Two modes. Pick one — never both.
 
 ```java
+// apiKey = "<key_id>:<secret>" and jwt come from your own secret store — never hard-code them.
 import WebRobot.Cli.Sdk.openapi.OpenApiSdkAdapter;
 import eu.webrobot.openapi.client.ApiClient;
 import eu.webrobot.openapi.client.api.DefaultApi;
@@ -59,10 +60,10 @@ import eu.webrobot.openapi.client.api.DefaultApi;
 OpenApiSdkAdapter sdk = new OpenApiSdkAdapter("https://api.webrobot.eu/api")  /* generated paths start with /webrobot/api */;
 
 // Option A — API key (recommended for service-to-service)
-sdk.withApiKey("X-API-Key", System.getenv("WEBROBOT_API_KEY"));
+sdk.withApiKey("X-API-Key", apiKey);
 
 // Option B — JWT bearer (recommended when user-context is needed)
-sdk.withApiKey("Authorization", "Bearer " + System.getenv("WEBROBOT_JWT"));
+sdk.withApiKey("Authorization", "Bearer " + jwt);
 
 ApiClient   apiClient = sdk.getApiClient();
 DefaultApi  api       = sdk.api();
@@ -227,7 +228,7 @@ String executionId = result.path("executionId").asText();
 
 - **Use the typed `DefaultApi`** for endpoints documented in OpenAPI — type safety + IDE autocomplete.
 - **Use `GenericClient`** for partner-vertical endpoints, dynamic responses, or path-templated GETs you find boilerplate.
-- **Never embed credentials in source.** Use env vars (`WEBROBOT_API_KEY` / `WEBROBOT_JWT`) or a config file outside the repo.
+- **Never embed credentials in source.** Load the key (`key_id:secret`) or JWT from your own secret store or a config file outside the repo.
 - **Catch `GenericApiException` / `ApiException`** explicitly — both expose statusCode/errorBody for structured handling.
 - **The catalog endpoint needs auth** like every other call: `/api/webrobot/api/catalog/stages` returns 401 without a key.
 

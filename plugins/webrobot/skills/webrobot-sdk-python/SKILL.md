@@ -1,7 +1,7 @@
 ---
-name: webrobot-sdk-python
-description: Consume the WebRobot REST API from a Python application using the public webrobot-sdk Python package. Use when the user wants to integrate WebRobot into a Python script, ETL job, or backend — NOT for writing Python Extensions inside the ETL engine (those use a different mechanism; see /webrobot-python-extension).
-argument-hint: [task description, e.g. "list projects from a Python script"]
+name: "webrobot-sdk-python"
+description: "Consume the WebRobot REST API from a Python application using the public webrobot-sdk Python package. Use when the user wants to integrate WebRobot into a Python script, ETL job, or backend — NOT for writing Python Extensions inside the ETL engine (those use a different mechanism; see /webrobot-python-extension)."
+argument-hint: "[task description, e.g. \"list projects from a Python script\"]"
 user-invocable: true
 ---
 
@@ -15,17 +15,9 @@ You help the user consume the WebRobot REST API as a CLIENT from Python. The SDK
 
 ## Install
 
-Until PyPI publication, install directly from GitHub:
-
-```bash
-pip install "git+https://github.com/WebRobot-Ltd/webrobot-sdk.git#subdirectory=python-sdk"
-```
-
-Once published to PyPI:
-
-```bash
-pip install webrobot-sdk
-```
+Install the SDK as described in its repository: https://github.com/WebRobot-Ltd/webrobot-sdk
+(folder `python-sdk`, README "Install"). Follow pip's own documentation for installing a package
+from a Git repository or, once it is published, from PyPI (`webrobot-sdk`).
 
 The import name is `webrobot` (not `webrobot_sdk`). Python 3.9+.
 
@@ -36,6 +28,7 @@ The import name is `webrobot` (not `webrobot_sdk`). Python 3.9+.
 Two modes. Pick one — never both.
 
 ```python
+# API_KEY = "<key_id>:<secret>" and JWT come from your own secret store — never hard-code them.
 import os
 import webrobot
 from webrobot.rest import ApiException
@@ -43,13 +36,13 @@ from webrobot.rest import ApiException
 # Option A — API key (recommended for service-to-service)
 configuration = webrobot.Configuration(
     host="https://api.webrobot.eu/api",  # generated paths start with /webrobot/api
-    api_key={"X-API-Key": os.environ["WEBROBOT_API_KEY"]},
+    api_key={"X-API-Key": API_KEY},
 )
 
 # Option B — JWT bearer (recommended when user-context is needed)
 configuration = webrobot.Configuration(
     host="https://api.webrobot.eu/api",  # generated paths start with /webrobot/api
-    access_token=os.environ["WEBROBOT_JWT"],
+    access_token=JWT,
 )
 
 api_client = webrobot.ApiClient(configuration)
@@ -129,7 +122,7 @@ For partner-vertical endpoints not yet in `DefaultApi`, or dynamic JSON response
 import os, requests
 
 API = "https://api.webrobot.eu/api"  # paths below start with /webrobot/api
-HEADERS = {"X-API-Key": os.environ["WEBROBOT_API_KEY"]}
+HEADERS = {"X-API-Key": API_KEY}
 
 # Sentiment plugin partner-vertical endpoint
 r = requests.get(f"{API}/webrobot/api/sentiment/timeseries",

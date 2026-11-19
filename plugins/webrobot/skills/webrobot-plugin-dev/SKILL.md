@@ -1,7 +1,7 @@
 ---
-name: webrobot-plugin-dev
-description: Build WebroBot plugins — custom ETL stages (Scala SDK) and REST API endpoints (Java JAX-RS). Use when the user wants to create a new plugin, add a custom stage, extend the REST API, or understand the plugin architecture.
-argument-hint: [plugin type and description, e.g. "ETL stage to save leads to CRM" or "REST API plugin for price comparison"]
+name: "webrobot-plugin-dev"
+description: "Build WebroBot plugins — custom ETL stages (Scala SDK) and REST API endpoints (Java JAX-RS). Use when the user wants to create a new plugin, add a custom stage, extend the REST API, or understand the plugin architecture."
+argument-hint: "[plugin type and description, e.g. \"ETL stage to save leads to CRM\" or \"REST API plugin for price comparison\"]"
 user-invocable: true
 ---
 
@@ -353,7 +353,7 @@ findings in `scan_results.trivy.vulns[]` during review.
 ### Build
 
 ```bash
-JAVA_HOME=/home/roger/.jdks/openjdk-21 ./gradlew :my-plugin:jar
+./gradlew :my-plugin:jar      # JDK 21 (set JAVA_HOME if your default JDK differs)
 ```
 
 ### Non-Serializable fields (HttpClient etc.)
@@ -551,9 +551,7 @@ CREATE INDEX IF NOT EXISTS idx_my_items_org ON my_items (organization_id);
 ### Build
 
 ```bash
-JAVA_HOME=/home/roger/.jdks/openjdk-21 \
-  /home/roger/Projects/tools-and-infra/tools/idea-IU-232.9921.47/plugins/maven/lib/maven3/bin/mvn \
-  compile
+mvn compile      # JDK 21 (set JAVA_HOME if your default JDK differs)
 ```
 
 ---

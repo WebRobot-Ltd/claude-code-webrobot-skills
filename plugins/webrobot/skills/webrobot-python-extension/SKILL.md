@@ -1,7 +1,7 @@
 ---
-name: webrobot-python-extension
-description: Write, register, and embed Python Extension functions for WebroBot pipelines. Use when the user wants to add custom row-level logic to a pipeline without building a Scala plugin — inline in the YAML or registered via API.
-argument-hint: [description of the transform logic or existing yaml path]
+name: "webrobot-python-extension"
+description: "Write, register, and embed Python Extension functions for WebroBot pipelines. Use when the user wants to add custom row-level logic to a pipeline without building a Scala plugin — inline in the YAML or registered via API."
+argument-hint: "[description of the transform logic or existing yaml path]"
 user-invocable: true
 ---
 

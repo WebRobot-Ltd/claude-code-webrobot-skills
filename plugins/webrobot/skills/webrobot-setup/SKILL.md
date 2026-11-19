@@ -1,7 +1,7 @@
 ---
-name: webrobot-setup
-description: Connect Claude Code to WebRobot and find the right tool for a task. Covers the API key (the plugin's "WebRobot API key" option), verifying the connection, what each platform area does, and a task-to-tool map (datasets, pipelines, projects and jobs, agents, apps, knowledge, analytics reports, AI Agent Deploy) with exact MCP tool names and REST paths. Use first when the user is getting started, when a WebRobot tool call fails with 401/403/404, or when you don't know which tool covers a task.
-argument-hint: [what to set up or do, e.g. "connect my account" or "which tool runs a job"]
+name: "webrobot-setup"
+description: "Connect Claude Code to WebRobot and find the right tool for a task. Covers the API key (the plugin's \"WebRobot API key\" option), verifying the connection, what each platform area does, and a task-to-tool map (datasets, pipelines, projects and jobs, agents, apps, knowledge, analytics reports, AI Agent Deploy) with exact MCP tool names and REST paths. Use first when the user is getting started, when a WebRobot tool call fails with 401/403/404, or when you don't know which tool covers a task."
+argument-hint: "[what to set up or do, e.g. \"connect my account\" or \"which tool runs a job\"]"
 user-invocable: true
 ---
 
@@ -41,7 +41,7 @@ REST URL:   https://api.webrobot.eu/api/webrobot/api/datasets
 
 ```bash
 export WR=https://api.webrobot.eu/api/webrobot/api
-curl -s "$WR/auth/me" -H "X-API-Key: $WEBROBOT_API_KEY"
+curl -s "$WR/auth/me" -H "X-API-Key: <key_id>:<secret>"
 ```
 
 You can also log in as a user to get a JWT, then send `Authorization: Bearer <jwt>`:
@@ -166,9 +166,9 @@ spec: { agent: ref:demo-pipeline, enabled: true }
 The MCP server has **no tool** for apps. Use REST, or build and publish in the console (App Studio):
 
 ```bash
-curl -s "$WR/vertical-apps" -H "X-API-Key: $WEBROBOT_API_KEY"            # {"apps":[{slug,url,previewUrl,...}]}
-curl -s "$WR/vertical-apps/<slug>" -H "X-API-Key: $WEBROBOT_API_KEY"     # draft + published manifest
-curl -s -X PUT "$WR/vertical-apps/<slug>/draft" -H "X-API-Key: $WEBROBOT_API_KEY" \
+curl -s "$WR/vertical-apps" -H "X-API-Key: <key_id>:<secret>"            # {"apps":[{slug,url,previewUrl,...}]}
+curl -s "$WR/vertical-apps/<slug>" -H "X-API-Key: <key_id>:<secret>"     # draft + published manifest
+curl -s -X PUT "$WR/vertical-apps/<slug>/draft" -H "X-API-Key: <key_id>:<secret>" \
   -H 'Content-Type: application/json' -d '{"manifest":"<manifest JSON as a string>"}'
 ```
 

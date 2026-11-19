@@ -1,7 +1,7 @@
 ---
-name: webrobot-app-builder
-description: Design, validate and publish WebRobot vertical apps (App Studio / App Builder) — the VerticalApp manifest (agents, views, data, approvals, triggers, schedules, serviceHours, auth, branding, billing), the draft → validate → publish flow to <slug>.webrobot.eu, and the app-builder co-pilot. Use when the user wants to build or change an AI-agent web app served by WebRobot.
-argument-hint: [app description, or "publish/validate app <slug>"]
+name: "webrobot-app-builder"
+description: "Design, validate and publish WebRobot vertical apps (App Studio / App Builder) — the VerticalApp manifest (agents, views, data, approvals, triggers, schedules, serviceHours, auth, branding, billing), the draft → validate → publish flow to <slug>.webrobot.eu, and the app-builder co-pilot. Use when the user wants to build or change an AI-agent web app served by WebRobot."
+argument-hint: "[app description, or \"publish/validate app <slug>\"]"
 user-invocable: true
 ---
 
@@ -36,8 +36,8 @@ Publishing **must** go through the materialising step. The bare Jersey `POST /ve
 `{manifest, publishState, runtimeCredentialId}` stores whatever it gets: a manifest that still has `profile.inline`
 would be published with agents that cannot run. Supported ways:
 1. App Studio **Publish** (recommended).
-2. From a checkout of `webrobot-vertical-kit`: `WR_KEY=<key> [WR_ORG=<orgId>] npx tsx scripts/publish-file.mts app.vertical.yaml`
-   (draft → materialise → publish, same gate as App Studio).
+2. The publish script of the `webrobot-vertical-kit` repository (`scripts/publish-file.mts`, see that
+   repository's README): draft → materialise → publish, same gate as App Studio.
 
 Roles: developer = save drafts + publish updates; **admin** = first publish (creates the app key), payments, export,
 delete; super_admin = transfer to another org. A developer's first publish fails at step `api key:`.
@@ -45,7 +45,7 @@ delete; super_admin = transfer to another org. A developer's first publish fails
 ## REST
 
 ```bash
-API=https://api.webrobot.eu/api/webrobot/api; H="X-API-Key: $WEBROBOT_API_KEY"
+API=https://api.webrobot.eu/api/webrobot/api; H="X-API-Key: <key_id>:<secret>"
 curl -s "$API/vertical-apps" -H "$H"                                   # org's apps: slug, publishedVersion, hasDraft, url, previewUrl, domains
 curl -s "$API/vertical-apps/visit-brief" -H "$H"                       # draftManifest, publishedManifest, publishState (strings)
 jq -n --rawfile m app.json '{manifest:$m}' | \

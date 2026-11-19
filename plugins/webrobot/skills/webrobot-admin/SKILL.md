@@ -1,7 +1,7 @@
 ---
-name: webrobot-admin
-description: Manage WebRobot resources through the authenticated WebRobot MCP — projects, jobs, executions, ETL agents, categories, datasets, cloud credentials, API keys, users/invites/roles, organizations (super admin), billing and credits. Use when the user wants to list, create, update, delete, run, stop or inspect a WebRobot entity.
-argument-hint: [entity and action, e.g. "list jobs of project X" or "stop execution Y"]
+name: "webrobot-admin"
+description: "Manage WebRobot resources through the authenticated WebRobot MCP — projects, jobs, executions, ETL agents, categories, datasets, cloud credentials, API keys, users/invites/roles, organizations (super admin), billing and credits. Use when the user wants to list, create, update, delete, run, stop or inspect a WebRobot entity."
+argument-hint: "[entity and action, e.g. \"list jobs of project X\" or \"stop execution Y\"]"
 user-invocable: true
 ---
 

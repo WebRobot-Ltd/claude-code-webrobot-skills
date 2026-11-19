@@ -1,7 +1,7 @@
 ---
-name: webrobot-pipeline
-description: Build, validate, deploy and run WebRobot ETL pipelines (manifest YAML with kinds Project / Dataset / Pipeline / Job). Use when the user wants to create or modify a pipeline, add stages, configure a scraping workflow, run a pipeline job, or query its results.
-argument-hint: [pipeline description or yaml path]
+name: "webrobot-pipeline"
+description: "Build, validate, deploy and run WebRobot ETL pipelines (manifest YAML with kinds Project / Dataset / Pipeline / Job). Use when the user wants to create or modify a pipeline, add stages, configure a scraping workflow, run a pipeline job, or query its results."
+argument-hint: "[pipeline description or yaml path]"
 user-invocable: true
 ---
 
@@ -39,7 +39,7 @@ The plugin's MCP server (`webrobot`) is the authenticated WebRobot API; its tool
 Auth for direct REST calls: `X-API-Key: <key>` or `Authorization: Bearer <JWT>`. Every endpoint above requires auth, including the stage catalog. The old base path `https://api.webrobot.eu/webrobot/api/...` (without the leading `/api`) returns 404.
 
 ```bash
-curl -fsSL "https://api.webrobot.eu/api/webrobot/api/catalog/stages?stage_name=fetch" -H "X-API-Key: $WEBROBOT_API_KEY"
+curl -fsSL "https://api.webrobot.eu/api/webrobot/api/catalog/stages?stage_name=fetch" -H "X-API-Key: <key_id>:<secret>"
 ```
 
 ## Compliance: what you may and may not design (READ FIRST)

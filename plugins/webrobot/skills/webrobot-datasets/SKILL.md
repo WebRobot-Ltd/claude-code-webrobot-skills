@@ -1,7 +1,7 @@
 ---
-name: webrobot-datasets
-description: Work with WebRobot datasets. List and inspect them, upload a CSV (REST multipart or the MCP uploadDatasetJson tool), read columns, run read-only SQL with executeQuery (the [datasetId] shortcut) or queryDatasetByTask (the {table} placeholder), find the output dataset of a job run, and export rows. Use when the user wants to upload data, look at a dataset, query or export results, or find what a job produced.
-argument-hint: [dataset task, e.g. "upload sales.csv and sum by region" or "show the output of job 812"]
+name: "webrobot-datasets"
+description: "Work with WebRobot datasets. List and inspect them, upload a CSV (REST multipart or the MCP uploadDatasetJson tool), read columns, run read-only SQL with executeQuery (the [datasetId] shortcut) or queryDatasetByTask (the {table} placeholder), find the output dataset of a job run, and export rows. Use when the user wants to upload data, look at a dataset, query or export results, or find what a job produced."
+argument-hint: "[dataset task, e.g. \"upload sales.csv and sum by region\" or \"show the output of job 812\"]"
 user-invocable: true
 ---
 
@@ -11,7 +11,7 @@ Setup, API key and the REST prefix are covered in the `webrobot-setup` skill. In
 
 ```bash
 export WR=https://api.webrobot.eu/api/webrobot/api
-H="X-API-Key: $WEBROBOT_API_KEY"
+H="X-API-Key: <key_id>:<secret>"
 ```
 
 Everything is scoped to the key's organization. Other orgs' datasets answer 404, or 403 for SQL. A viewer key is read-only, and developer/viewer keys see only the datasets of projects they are assigned to.
