@@ -54,7 +54,11 @@ A pipeline you emit gets replayed on a schedule, so it must stay lawful and with
 ## Use the source catalog: do NOT rediscover sources
 
 `catalogSources` has already resolved, per source: the URL, the **fetch method** (`wget` vs a real-browser `visit`), its `anti_bot` posture, whether a residential `proxy` is needed, and whether it is reachable now. Use `domain` to fetch the row of one site. When the request hands you a SOURCES list, or the catalog has rows for the topic:
-- Map **fetch_method → stage**: `wget` → `wget`/`fetch`; `browser` → `visit` (Camoufox renders JS and handles common public-page bot protection). Never put `wget` on a `browser` source: it returns an empty shell.
+- Map **fetch_method → stage** (Spark engine):
+  - `wget` → `wget`/`fetch`.
+  - `browser`, or a site not in the catalog → **`resilientFetch`** by default: plain HTTP first, the browser (Camoufox) only when that comes back blocked or empty (403/429, anti-bot challenge, JS-only shell). Many "browser" sites serve their listing pages server-rendered, and the browser is slower and can time out on heavy pages. Same for pagination and detail pages: `resilientExplore`, `resilientJoin`.
+  - Use `visit` directly only when the page must be driven (clicks, search box, load-more) or when `resilientFetch` was already shown to return an empty shell for that site.
+  - The lightweight engines (`scrapy`, `hybrid`) have no `resilient*` stages: there use `wget`, or `visit` for a `browser` source.
 - Prefer sources marked reachable; skip `anti_bot: login` for scraping (use their API); treat strongly blocked sources as out of scope unless a setup has been agreed with the client.
 - Discover from scratch only when neither a catalog row nor a SOURCES list exists.
 
@@ -457,7 +461,8 @@ catalog**. Steps:
 2. Load it into WebRobot as a dataset: `uploadDatasetJson(name="my_catalogue", filename="catalogue.csv",
    dataset_type="input", content="sku,name,price\n...")` → `filePath` (an `s3a://…/catalogue.csv`).
 3. `catalogSources(domain=...)` for each competitor: build each competitor source from its `selectors`
-   recipe (segment + fields) and its `fetch_method`. Point it at the **category/listing page** the user
+   recipe (segment + fields); fetch with `wget` when the recipe says `wget`, otherwise `resilientFetch` (Spark).
+   Point it at the **category/listing page** the user
    names (robots.txt usually forbids the internal search pages); page 2 follows the recipe's `pagination`.
 4. One multi-source pipeline: the catalogue dataset is just another source (`load_csv`), a common
    `sql_query` tail derives the same normalized key on every source, and `match:` builds the comparison
