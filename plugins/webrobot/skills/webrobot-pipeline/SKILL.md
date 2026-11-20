@@ -494,6 +494,8 @@ output: { format: parquet, mode: overwrite, path: "${OUTPUT_PARQUET_PATH}" }
   use it only where the pattern occurs once (e.g. the year).
 - Parse prices so both `1.234,50 €` and `€1234.50` work (comma present → drop dots, comma becomes dot).
 - Keep fields one source lacks (a vintage the shop doesn't print) as columns to compare, not in the key.
+- **Keep the `source` column in every tail `SELECT`** (`SELECT *, …` or `SELECT source, …`): `match:` counts the
+  shops by it. Using it only inside a function (`regexp_replace(source, …) AS shop`) still drops it.
 - On the hybrid engine `match: { by: [name], min_sources: 2 }` matches by text similarity instead of an
   exact key (CPU, no LLM) — useful when names are spelled differently across shops.
 - Then compare in the table, propose changes, and write prices back only through the customer's system
