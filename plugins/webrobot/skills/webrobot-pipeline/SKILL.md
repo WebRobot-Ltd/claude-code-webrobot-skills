@@ -445,6 +445,60 @@ Lessons:
 - Analytics verticals combine on the `source` column instead of `match:` (e.g. `sentiment` then `avgSentimentByKey` with `["source", "sentiment_score"]`).
 - Known issue (as last observed): after the `sources:` union, `transformRow` LLM stages such as `sentiment` may read empty text and return neutral defaults. Workaround: run those stages **inside each source's `pipeline:`**, before the union.
 
+**`match:` is a top-level block of the pipeline YAML, not a stage.** Do not look for it with `listStages`/`getStage`; write it next to `sources:` and `pipeline:` as above.
+
+### Recipe: compare a customer's catalogue with competitors (price intelligence)
+
+The customer's own products come from **their system** (an e-commerce MCP such as WooCommerce/Shopify,
+a file, a database) — never scrape the customer's own shop. Competitors come from the **source
+catalog**. Steps:
+
+1. Read the catalogue from the customer's system (e.g. the shop MCP's `list_products`).
+2. Load it into WebRobot as a dataset: `uploadDatasetJson(name="my_catalogue", filename="catalogue.csv",
+   dataset_type="input", content="sku,name,price\n...")` → `filePath` (an `s3a://…/catalogue.csv`).
+3. `catalogSources(domain=...)` for each competitor: build each competitor source from its `selectors`
+   recipe (segment + fields) and its `fetch_method`. Point it at the **category/listing page** the user
+   names (robots.txt usually forbids the internal search pages); page 2 follows the recipe's `pagination`.
+4. One multi-source pipeline: the catalogue dataset is just another source (`load_csv`), a common
+   `sql_query` tail derives the same normalized key on every source, and `match:` builds the comparison
+   table (one row per key with the offers of every source).
+5. Run it with `engine: hybrid` (small job, fast; its tail SQL is DuckDB) or Spark for large catalogues
+   (tail SQL is Spark SQL), then read the table with `queryDatasetByTask`.
+
+```yaml
+sources:
+  catalogue:
+    pipeline:
+      - { stage: load_csv, args: [{ path: "<filePath from uploadDatasetJson>", header: "true" }] }
+  vino:
+    pipeline:
+      - { stage: fetch, args: ["https://www.vino.com/denominazione/barolo"] }
+      - { stage: flatSelect, args: [".ias-item", [ {selector: ".titolo-subtitle-cantina", method: text, as: name},
+                                                   {selector: ".price-box", method: text, as: price},
+                                                   {selector: "a[href*=dettaglio]", method: "attr:href", as: url} ]] }
+  # … one source per competitor page, built the same way from its catalog recipe
+pipeline:
+  - stage: sql_query      # same key on every source: the wine's name without generic words, year, spaces, punctuation
+    args:
+      - "SELECT *, regexp_extract(name, '(19|20)[0-9]{2}', 0) AS vintage,
+         translate(regexp_replace(replace(replace(replace(lower(name), 'barolo', ''), 'docg', ''), 'riserva', ''),
+                   '(19|20)[0-9]{2}', ''), ' .,-''’\"', '') AS wine_key
+         FROM df"
+match: { key: wine_key, collect: [source, name, vintage, price, url], min_sources: 2 }
+output: { format: parquet, mode: overwrite, path: "${OUTPUT_PARQUET_PATH}" }
+```
+
+- Write the tail so it means the same on both engines (hybrid runs it in DuckDB, Spark in Spark SQL):
+  `replace()` and `translate()` change every occurrence in both, while `regexp_replace` replaces ALL
+  matches in Spark but only the FIRST in DuckDB (and DuckDB's `'g'` flag is a NULL position in Spark) —
+  use it only where the pattern occurs once (e.g. the year).
+- Parse prices so both `1.234,50 €` and `€1234.50` work (comma present → drop dots, comma becomes dot).
+- Keep fields one source lacks (a vintage the shop doesn't print) as columns to compare, not in the key.
+- On the hybrid engine `match: { by: [name], min_sources: 2 }` matches by text similarity instead of an
+  exact key (CPU, no LLM) — useful when names are spelled differently across shops.
+- Then compare in the table, propose changes, and write prices back only through the customer's system
+  (e.g. the shop MCP's `update_price`) after the user approves.
+
 ## LLM-driven e-commerce flow: fetch + auto_internal_search → intelligentExplore → intelligentJoin → iextract
 
 Use when CSS selectors are unknown or brittle.
