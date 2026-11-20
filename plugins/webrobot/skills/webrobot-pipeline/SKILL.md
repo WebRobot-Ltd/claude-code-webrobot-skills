@@ -418,6 +418,8 @@ When the catalog has a recipe with `detail_segment` for the forum, prefer the de
 
 ## Multi-source pipelines (`sources:` + `match:`)
 
+**Preferred form for any comparison or merge across several sources** (price comparison, catalogue vs competitors, listings from several portals): ONE pipeline with `sources:` + a common tail + `match:`. Do not run separate jobs and join their outputs afterwards, and do not hand-write `store`/`reset`/`union_with`: `sources:` desugars to exactly those.
+
 One YAML scrapes several sources: each `sources.<name>` is its own mini `pipeline:`; rows are tagged with a literal **`source`** column (the map key) and unioned; the top-level `pipeline:` runs on the union; `match:` desugars to a `sql_query GROUP BY`. **`sources:` is a MAP, not a list** (a list fails with `MismatchedInputException ... ["sources"]`). Use `match: key:` (NOT `on:`, which YAML 1.1 turns into a boolean).
 
 ```yaml
