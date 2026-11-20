@@ -271,7 +271,16 @@ Step 3, run: `executeJob_1` with `{projectId, jobId}` (add `engine` if not Spark
 
 The wrong mechanism silently returns only page 1.
 
-**A. URL-based**: `?page=N`, `?index=N`, `&start=N`, or a real `<a href>` "next". Pages are independently fetchable → `wgetExplore` / `visitExplore` (they follow the link's **absolute href**), or seed the page URLs and fetch in parallel (best on Spark).
+**A. URL-based**: `?page=N`, `?index=N`, `&start=N`, or a real `<a href>` "next". Pages are independently fetchable → **one source per site**: fetch the first page, then follow the next-page link with `wgetExplore` (catalog verdict `wget`), `resilientExplore` (browser or uncatalogued site, Spark: wget first, browser only if blocked) or `visitExplore`. `depth` N reads the first page **plus N more** (5 pages → depth 4); pass `maxLinks` 1 so only the single "next" link is followed:
+```yaml
+- stage: resilientFetch
+  args: ["https://shop.example/category"]
+- stage: resilientExplore
+  args: ["a[rel='next']", 4, 1]      # next-page selector, depth, maxLinks
+- stage: flatSelect
+  args: [".product", [ {selector: ..., method: ..., as: ...} ]]
+```
+Seed explicit page URLs only when the recipe's `pagination` gives the exact template (`url_template` with `{page}`); never guess the step of `?start=` / `?page=` (a wrong page size makes pages overlap or be skipped).
 
 **B. Click-based**: a `<button>` "Next", "Load more", or JS instant search with no followable href → **`visitPaginate`**:
 ```yaml
@@ -467,9 +476,12 @@ catalog**. Steps:
 3. `catalogSources(domain=...)` for each competitor: build each competitor source from its `selectors`
    recipe (segment + fields); fetch with `wget` when the recipe says `wget`, otherwise `resilientFetch` (Spark).
    Point it at the **category/listing page** the user
-   names (robots.txt usually forbids the internal search pages); page 2 follows the recipe's `pagination`.
+   names (robots.txt usually forbids the internal search pages); more pages: one source per site with
+   the explore stage that follows the next-page link (see Pagination), not one source per page.
 4. One multi-source pipeline: the catalogue dataset is just another source (`load_csv`), a common
-   `sql_query` tail derives the same normalized key on every source, and `match:` builds the comparison
+   `sql_query` tail derives the same normalized key on every source (distinctive words only: lowercase,
+   letters only, drop the category's generic words, plus the field that must be equal such as the vintage),
+   and `match:` builds the comparison
    table (one row per key with the offers of every source).
 5. Run it with `engine: hybrid` (small job, fast; its tail SQL is DuckDB) or Spark for large catalogues
    (tail SQL is Spark SQL), then read the table with `queryDatasetByTask`.
