@@ -451,6 +451,8 @@ Lessons:
 - Analytics verticals combine on the `source` column instead of `match:` (e.g. `sentiment` then `avgSentimentByKey` with `["source", "sentiment_score"]`).
 - Known issue (as last observed): after the `sources:` union, `transformRow` LLM stages such as `sentiment` may read empty text and return neutral defaults. Workaround: run those stages **inside each source's `pipeline:`**, before the union.
 
+**`sql_query` goes only at the END of a pipeline** (the common tail, or the end of a source's own `pipeline:`), never before a stage that fetches (`fetch`/`wget`/`visit`/`resilient*`/`*Join`/`*Explore`/`paginate`). To run the SQL it turns the dataset into a Spark DataFrame and rebuilds fresh rows with only the selected columns: the fetched pages are dropped and its output columns are not visible to `$column` references, so a later `resilientFetch: ["$url"]` fetches nothing. To fetch a list of URLs, load them (`load_csv`) and fetch directly, filtering the file itself beforehand; `manifestValidate` rejects a sql_query placed before a fetch stage.
+
 **`match:` is a top-level block of the pipeline YAML, not a stage.** Do not look for it with `listStages`/`getStage`; write it next to `sources:` and `pipeline:` as above.
 
 ### Recipe: compare a customer's catalogue with competitors (price intelligence)
