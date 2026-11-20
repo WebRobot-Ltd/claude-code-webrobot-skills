@@ -482,9 +482,9 @@ catalog**. Steps:
    `sql_query` tail derives the same normalized key on every source (distinctive words only: lowercase,
    letters only, drop the category's generic words, plus the field that must be equal such as the vintage),
    and `match:` builds the comparison
+   table (one row per key with the offers of every source).
    The platform adds the `source` column (the source's name) to every row: never write `'x' AS source`
    inside a source's pipeline — a second `source` column makes the tail fail with AMBIGUOUS_REFERENCE.
-   table (one row per key with the offers of every source).
 5. Run it with `engine: hybrid` (small job, fast; its tail SQL is DuckDB) or Spark for large catalogues
    (tail SQL is Spark SQL), then read the table with `queryDatasetByTask`.
 
