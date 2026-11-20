@@ -483,6 +483,28 @@ catalog**. Steps:
    letters only, drop the category's generic words, plus the field that must be equal such as the vintage),
    and `match:` builds the comparison
    table (one row per key with the offers of every source).
+   The match key decides everything: the same product is written differently on every shop
+   ("Barolo DOCG 2022 Prunotto 0,75 ℓ", "Barolo Prunotto", "Barolo DOCG 2022 Prunotto"). Removing only
+   spaces and punctuation is NOT enough (digits and "ℓ" stay → "prunotto075ℓ" never meets "prunotto").
+   Every source (the catalogue too) must end with the same text columns `name`, `url`, `price`. Then use this
+   tail (Spark SQL; adapt the generic words to the category; DISTINCT drops the same page read twice):
+   ```sql
+   SELECT source, name, url, price_eur, vintage,
+          concat(regexp_replace(
+                   regexp_replace(translate(lower(name), 'àáâäèéêëìíîïòóôöùúûü', 'aaaaeeeeiiiioooouuuu'),
+                                  '\\b(barolo|docg|doc|riserva|anni|anno|magnum|cassetta|legno|cl|ml|lt|l)\\b', ' '),
+                   '[^a-z]+', ''),
+                 '|', coalesce(vintage, '')) AS match_key
+   FROM (SELECT DISTINCT source, name, url,
+                CAST(regexp_replace(CASE WHEN price LIKE '%,%' THEN replace(replace(price, '.', ''), ',', '.') ELSE price END,
+                                    '[^0-9.]', '') AS DOUBLE) AS price_eur,
+                coalesce(nullif(regexp_extract(name, '(19|20)[0-9]{2}', 0), ''),
+                         nullif(regexp_extract(url, '(19|20)[0-9]{2}', 0), '')) AS vintage
+         FROM df)
+   ```
+   Then `match: { key: match_key, collect: [source, name, price_eur, vintage, url], min_sources: 2 }`.
+   Before running, check that two sample names from DIFFERENT sources give the same key. Tested on Spark
+   2026-11-20: catalogue + vino.com + callmewine Barolo → 8 groups, every catalogue wine found on vino.com.
    The platform adds the `source` column (the source's name) to every row: never write `'x' AS source`
    inside a source's pipeline — a second `source` column makes the tail fail with AMBIGUOUS_REFERENCE.
 5. Run it with `engine: hybrid` (small job, fast; its tail SQL is DuckDB) or Spark for large catalogues
