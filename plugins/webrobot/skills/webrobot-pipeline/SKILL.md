@@ -91,6 +91,20 @@ The same pipeline YAML runs on different engines; only the stage set and runtime
 
 Rule: scraping only → `scrapy`; small relational/Python analysis → `analytics`; small scrape+analyze → `hybrid`; big data / ML / LLM-heavy / many sources → Spark. `sql_query` and `python_extensions` run on `analytics`/`hybrid` too (DuckDB SQL; Spark and DuckDB SQL are both ANSI and largely interchangeable). Escalate to Spark when the data won't fit one worker's memory.
 
+**HPC (EuroHPC) runs: `engine: "slurm"`.** A Spark pipeline runs on the supercomputer inside an ephemeral Kubernetes started in the Slurm job, with the encrypted runtime and the plugins baked in. Prerequisite: an open HPC session for the credential (the user opens it with their OTP; without it the call returns `HPC_SESSION_REQUIRED`). The HPC parameters go **flat inside `options`, with these exact names** (other names are silently ignored and the run falls back to the defaults):
+
+| `options` key | Meaning | Default |
+|---|---|---|
+| `hpcCredentialId` | eurohpc cloud credential id (required) | — |
+| `hpcExecutors` | Spark executors in total | 16 |
+| `hpcExecutorCores` | cores per executor | 2 |
+| `hpcNodes` | nodes (1-8); executors are split evenly; > 1 = multi-node k8s | 1 |
+| `hpcTime` | Slurm time limit `HH:MM:SS` | `00:30:00` |
+| `hpcAccount` | Slurm account | — |
+| `hpcPartition` | Slurm partition | `cpu` |
+
+Example: `executeJob_1(projectId, jobId, engine: "slurm", options: {hpcCredentialId: 135, hpcExecutors: 50, hpcExecutorCores: 2, hpcNodes: 2, hpcTime: "02:00:00", hpcAccount: "<account>"})`. One CPU node holds at most ~50 executors × 4 GB: above ~30 executors use 2+ nodes. Expect 5-15 min before Spark starts (Slurm queue, k3s, image import). The job's input dataset reaches the driver as `INPUT_CSV_PATH` (auto `load_csv`, or `${INPUT_CSV_PATH}` in an explicit `load_csv`). On this encrypted runtime avoid `sql_query`; spread rows with `repartition N` (N ≈ 3 × executors × cores). Follow it with `getExecutionStatus_1` / `waitForExecution`; the output dataset is registered when the job ends.
+
 **BYOC / SaaS ephemeral VMs.** If the organization has `deployment_mode = byoc_soft` and a `byoc_soft_cloud_credential_id`, a Spark run goes automatically to **2 ephemeral Hetzner VMs** created for the run and destroyed afterwards; the caller passes no infra flags. Expect about **6 minutes of VM provisioning** before Spark starts: `executeJob_1` returns status `PROVISIONING`, which is not a hang. Lightweight engines (`scrapy`, `analytics`, `hybrid`, `temporal`, `slurm`) are not routed this way. For browser-heavy runs, `executeJob_1` also accepts per-run Camoufox VM flags: `camoufoxMode` (`IN_CLUSTER` | `EXTERNAL_VM`), `elasticBrowserVmCount`, `elasticBrowserCloudCredentialId`, `useEphemeralElasticBrowserVms`, `elasticBrowserVmLifecycle` (default `TEARDOWN_ALWAYS`; `KEEP`; `TEARDOWN_ON_JOB_SUCCESS`).
 
 ## The stage catalog is the source of truth
